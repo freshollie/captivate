@@ -2,7 +2,9 @@
   "files.associations": {
     ".eslintrc": "jsonc",
     ".prettierrc": "jsonc",
-    ".eslintignore": "ignore"
+    ".eslintignore": "ignore",
+    "initializer_list": "cpp",
+    "*.ipp": "cpp"
   },
 
   "eslint.validate": [

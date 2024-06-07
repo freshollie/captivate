@@ -13,7 +13,7 @@ export default function SceneSelection({
 }: {
   sceneType: SceneType
 }) {
-  const dispatch = useDispatch()
+  const dispatch = useDispatch();
 
   return (
     <Root>
