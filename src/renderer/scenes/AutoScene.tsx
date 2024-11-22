@@ -18,12 +18,12 @@ import { send_user_command } from 'renderer/ipcHandler'
 import { useRealtimeSelector } from 'renderer/redux/realtimeStore'
 
 const INTRO_BEATS = [
-  32, // 1 
+  32, // 1
   27, // 2
   1, // 2.1
   4, // 3
   32, // 4
-  26, // 5 
+  26, // 5
   5, // 6
   Infinity,
 ]
@@ -38,10 +38,12 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const sceneIds = useControlSelector((control) => control[sceneType].ids)
   const sceneById = useControlSelector((control) => control[sceneType].byId)
   const bpm = useRealtimeSelector((state) => state.time.bpm)
-  const beats = useRealtimeSelector((state) => parseFloat(state.time.beats.toFixed(2)))
+  const beats = useRealtimeSelector((state) =>
+    parseFloat(state.time.beats.toFixed(2))
+  )
   const activeId = useControlSelector((control) => control[sceneType].active)
 
-  const introSceneChangeBeat = useRef(0);
+  const introSceneChangeBeat = useRef(0)
 
   const strobeSceneIds = useControlSelector((control) => {
     const ids = control[sceneType].ids
@@ -67,13 +69,14 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   useEffect(() => {
     const introSceneIndex = introScenes.indexOf(activeId)
     if (introSceneIndex < 0) {
-      introSceneChangeBeat.current = -1;
-      return;
+      introSceneChangeBeat.current = -1
+      return
     }
 
-    if (introSceneChangeBeat.current > -1 && 
+    if (
+      introSceneChangeBeat.current > -1 &&
       beats - introSceneChangeBeat.current >
-      (INTRO_BEATS[introSceneIndex] ?? Infinity)
+        (INTRO_BEATS[introSceneIndex] ?? Infinity)
     ) {
       let nextSceneIndex = introSceneIndex + 1
       if (!introScenes[nextSceneIndex] || !introScenes.includes(activeId)) {
@@ -86,7 +89,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           val: introScenes[nextSceneIndex],
         })
       )
-      introSceneChangeBeat.current = beats;
+      introSceneChangeBeat.current = beats
     }
   }, [beats, introSceneChangeBeat, activeId, introScenes])
 
@@ -154,12 +157,12 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           )
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           send_user_command({ type: 'IncrementTempo', amount: 160 - bpm })
-          introSceneChangeBeat.current = beats;
+          introSceneChangeBeat.current = beats
           return
         }
 
         // Prevent the intro from auto moving on if we use any other input
-        introSceneChangeBeat.current = -1;
+        introSceneChangeBeat.current = -1
 
         let num = parseInt(e.key)
         if (!Number.isNaN(num)) {
