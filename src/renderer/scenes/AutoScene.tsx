@@ -11,9 +11,22 @@ import {
 import { SceneType } from '../../shared/Scenes'
 import DraggableNumber from '../base/DraggableNumber'
 import { ButtonMidiOverlay, SliderMidiOverlay } from 'renderer/base/MidiOverlay'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { randomElementExcludeCurrent } from 'shared/util'
 import Checkbox from '../base/LabelledCheckbox'
+import { send_user_command } from 'renderer/ipcHandler'
+import { useRealtimeSelector } from 'renderer/redux/realtimeStore'
+
+const INTRO_BEATS = [
+  32, // 1 
+  27, // 2
+  1, // 2.1
+  4, // 3
+  32, // 4
+  26, // 5 
+  5, // 6
+  Infinity,
+]
 
 export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const [keyBindingsEnabled, setKeyBindings] = useState(false)
@@ -24,6 +37,11 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
 
   const sceneIds = useControlSelector((control) => control[sceneType].ids)
   const sceneById = useControlSelector((control) => control[sceneType].byId)
+  const bpm = useRealtimeSelector((state) => state.time.bpm)
+  const beats = useRealtimeSelector((state) => parseFloat(state.time.beats.toFixed(2)))
+  const activeId = useControlSelector((control) => control[sceneType].active)
+
+  const introSceneChangeBeat = useRef(0);
 
   const strobeSceneIds = useControlSelector((control) => {
     const ids = control[sceneType].ids
@@ -39,12 +57,43 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     )
   })
 
+  const introScenes = useControlSelector((control) => {
+    const ids = control[sceneType].ids
+    return ids.filter((id) =>
+      control[sceneType].byId[id].name.includes('INTRO')
+    )
+  })
+
+  useEffect(() => {
+    const introSceneIndex = introScenes.indexOf(activeId)
+    if (introSceneIndex < 0) {
+      introSceneChangeBeat.current = -1;
+      return;
+    }
+
+    if (introSceneChangeBeat.current > -1 && 
+      beats - introSceneChangeBeat.current >
+      (INTRO_BEATS[introSceneIndex] ?? Infinity)
+    ) {
+      let nextSceneIndex = introSceneIndex + 1
+      if (!introScenes[nextSceneIndex] || !introScenes.includes(activeId)) {
+        return
+      }
+
+      dispatch(
+        setActiveScene({
+          sceneType,
+          val: introScenes[nextSceneIndex],
+        })
+      )
+      introSceneChangeBeat.current = beats;
+    }
+  }, [beats, introSceneChangeBeat, activeId, introScenes])
+
   const offScene = useControlSelector((control) => {
     const ids = control[sceneType].ids
     return ids.find((id) => control[sceneType].byId[id].name == 'OFF')
   })
-
-  const activeId = useControlSelector((control) => control[sceneType].active)
 
   const onBombacityChange = (newVal: number) => {
     dispatch(
@@ -92,6 +141,26 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           return
         }
 
+        if (e.key === 'Enter' && introScenes.length > 0) {
+          let nextSceneIndex = introScenes.indexOf(activeId) + 1
+          if (!introScenes[nextSceneIndex] || !introScenes.includes(activeId)) {
+            nextSceneIndex = 0
+          }
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: introScenes[nextSceneIndex],
+            })
+          )
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
+          send_user_command({ type: 'IncrementTempo', amount: 160 - bpm })
+          introSceneChangeBeat.current = beats;
+          return
+        }
+
+        // Prevent the intro from auto moving on if we use any other input
+        introSceneChangeBeat.current = -1;
+
         let num = parseInt(e.key)
         if (!Number.isNaN(num)) {
           console.log(num)
@@ -106,7 +175,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           return
         }
 
-        if (e.key === ' ' || e.key === 's') {
+        if ((e.key === ' ' || e.key === 's') && strobeSceneIds.length > 0) {
           const scene =
             strobeSceneIds[Math.floor(Math.random() * strobeSceneIds.length)]
 
@@ -199,6 +268,8 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     offScene,
     enabled,
     period,
+    bpm,
+    beats,
   ])
 
   return (
