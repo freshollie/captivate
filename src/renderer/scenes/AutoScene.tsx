@@ -124,7 +124,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           if (lightScene) {
             return (
               lightScene.autoEnabled &&
-              Math.abs(lightScene.epicness - epicnessLevel) < 0.5
+              Math.abs(lightScene.epicness - epicnessLevel) < 0.1
             )
           }
           return false
