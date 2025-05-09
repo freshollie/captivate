@@ -59,6 +59,13 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     )
   })
 
+  const discoScenes = useControlSelector((control) => {
+    const ids = control[sceneType].ids
+    return ids.filter((id) =>
+      control[sceneType].byId[id].name.includes('DISCO')
+    )
+  })
+
   const introScenes = useControlSelector((control) => {
     const ids = control[sceneType].ids
     return ids.filter((id) =>
@@ -124,7 +131,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           if (lightScene) {
             return (
               lightScene.autoEnabled &&
-              Math.abs(lightScene.epicness - epicnessLevel) < 0.1
+              Math.abs(lightScene.epicness - epicnessLevel) < 0.15
             )
           }
           return false
@@ -199,6 +206,22 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           const scene =
             lightsOnDjScenes[
               Math.floor(Math.random() * lightsOnDjScenes.length)
+            ]
+
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: scene,
+            })
+          )
+          return
+        }
+
+        if (e.key === 'd' && discoScenes.length > 0) {
+          const scene =
+            discoScenes[
+              Math.floor(Math.random() * discoScenes.length)
             ]
 
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))

@@ -37,7 +37,7 @@ export function handleAutoScene(
     if (lightScene) {
       return (
         lightScene.autoEnabled &&
-        Math.abs(lightScene.epicness - light.auto.epicness) < 0.1
+        Math.abs(lightScene.epicness - light.auto.epicness) < 0.15
       )
     }
     return false
