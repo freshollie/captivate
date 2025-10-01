@@ -30,6 +30,7 @@ const INTRO_BEATS = [
 
 export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const [keyBindingsEnabled, setKeyBindings] = useState(false)
+  const [prevScene, setPrevScene] = useState<string>();
   const dispatch = useDispatch()
   const { enabled, epicness, period } = useControlSelector(
     (control) => control[sceneType].auto
@@ -63,6 +64,20 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     const ids = control[sceneType].ids
     return ids.filter((id) =>
       control[sceneType].byId[id].name.includes('DISCO') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.2
+    )
+  })
+
+  const closeLaserScenes = useControlSelector((control) => {
+    const ids = control[sceneType].ids
+    return ids.filter((id) =>
+      control[sceneType].byId[id].name.includes('lasers') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.2
+    )
+  })
+
+  const closeStrobeScenes = useControlSelector((control) => {
+    const ids = control[sceneType].ids
+    return ids.filter((id) =>
+      control[sceneType].byId[id].name.toLowerCase().includes('strobe') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.2
     )
   })
 
@@ -126,6 +141,19 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   useEffect(() => {
     if (keyBindingsEnabled) {
       const newSceneFromEpicness = (epicnessLevel: number) => {
+        // and we previously switched from our scene
+        // we are going back to our existing level
+        if (prevScene && epicnessLevel === epicness) {
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: prevScene,
+            })
+          )
+          setPrevScene(undefined);
+          return
+        }
+
         const possibleScenes = sceneIds.filter((id) => {
           const lightScene = sceneById[id]
           if (lightScene) {
@@ -163,6 +191,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
             })
           )
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
+          // set tempo
           send_user_command({ type: 'IncrementTempo', amount: 160 - bpm })
           introSceneChangeBeat.current = beats
           return
@@ -179,15 +208,19 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           } else {
             num = num - 1
           }
+
           onBombacityChange(num / 10)
           newSceneFromEpicness(num / 10)
           dispatch(setAutoSceneEnabled({ sceneType, val: true }))
           return
         }
 
-        if ((e.key === ' ' || e.key === 's') && strobeSceneIds.length > 0) {
+        // Just strobe
+        if (e.key === 's' && strobeSceneIds.length > 0) {
           const scene =
             strobeSceneIds[Math.floor(Math.random() * strobeSceneIds.length)]
+          
+          setPrevScene(activeId);
 
           if (e.key === 's') {
             dispatch(setAutoSceneEnabled({ sceneType, val: false }))
@@ -202,12 +235,46 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           return
         }
 
-        if (e.key === 'l' && lightsOnDjScenes.length > 0) {
+        // close strobe
+        if (e.key === ' ' && closeStrobeScenes.length > 0) {
+          const scene =
+            closeStrobeScenes[Math.floor(Math.random() * closeStrobeScenes.length)]
+          
+          setPrevScene(activeId);
+
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: scene,
+            })
+          )
+          return
+        }
+
+        if (e.key === 'v' && lightsOnDjScenes.length > 0) {
           const scene =
             lightsOnDjScenes[
               Math.floor(Math.random() * lightsOnDjScenes.length)
             ]
+          
+          setPrevScene(activeId);
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: scene,
+            })
+          )
+          return
+        }
 
+        if (e.key === 'l' && closeLaserScenes.length > 0) {
+          const scene =
+            closeLaserScenes[
+              Math.floor(Math.random() * closeLaserScenes.length)
+            ]
+          
+          setPrevScene(activeId);
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
@@ -223,6 +290,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
             closeDiscoScenes[
               Math.floor(Math.random() * closeDiscoScenes.length)
             ]
+          setPrevScene(activeId);
 
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
@@ -268,7 +336,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
       }
 
       const keyUpListener = (e: KeyboardEvent) => {
-        if (e.key === ' ') {
+        if (e.key === ' ' && (strobeSceneIds.includes(activeId) || closeStrobeScenes.includes(activeId))) {
           dispatch(setAutoSceneEnabled({ sceneType, val: true }))
           newSceneFromEpicness(epicness)
           return
@@ -287,6 +355,9 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   }, [
     strobeSceneIds,
     lightsOnDjScenes,
+    closeLaserScenes,
+    closeStrobeScenes,
+    closeDiscoScenes,
     epicness,
     sceneById,
     activeId,
@@ -296,6 +367,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     period,
     bpm,
     beats,
+    prevScene
   ])
 
   return (
