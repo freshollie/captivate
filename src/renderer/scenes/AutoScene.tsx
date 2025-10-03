@@ -31,6 +31,7 @@ const INTRO_BEATS = [
 export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const [keyBindingsEnabled, setKeyBindings] = useState(false)
   const [prevScene, setPrevScene] = useState<string>();
+  const [specialScene, setSpecialScene] = useState<string>();
   const dispatch = useDispatch()
   const { enabled, epicness, period } = useControlSelector(
     (control) => control[sceneType].auto
@@ -70,7 +71,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const closeLaserScenes = useControlSelector((control) => {
     const ids = control[sceneType].ids
     return ids.filter((id) =>
-      control[sceneType].byId[id].name.includes('lasers') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.2
+      control[sceneType].byId[id].name.includes('lasers') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.13
     )
   })
 
@@ -154,6 +155,13 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           return
         }
 
+        // If we are changing epicness level
+        // and not switching from a special scene
+        // then we are forget the special scene
+        if (specialScene) {
+          setSpecialScene(undefined);
+        }
+
         const possibleScenes = sceneIds.filter((id) => {
           const lightScene = sceneById[id]
           if (lightScene) {
@@ -175,10 +183,11 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
         }
       }
       const keyListener = (e: KeyboardEvent) => {
+        e.preventDefault();
         if (e.repeat) {
           return
         }
-
+        
         if (e.key === 'Enter' && introScenes.length > 0) {
           let nextSceneIndex = introScenes.indexOf(activeId) + 1
           if (!introScenes[nextSceneIndex] || !introScenes.includes(activeId)) {
@@ -217,15 +226,26 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
 
         // Just strobe
         if (e.key === 's' && strobeSceneIds.length > 0) {
+          if (specialScene && strobeSceneIds.includes(specialScene)) {
+            if (activeId !== specialScene) {
+              setPrevScene(activeId);
+              dispatch(
+                setActiveScene({
+                  sceneType,
+                  val: specialScene,
+                })
+              )
+              return;
+            }
+            setSpecialScene(undefined);
+          } 
           const scene =
             strobeSceneIds[Math.floor(Math.random() * strobeSceneIds.length)]
           
           setPrevScene(activeId);
+          setSpecialScene(scene);
 
-          if (e.key === 's') {
-            dispatch(setAutoSceneEnabled({ sceneType, val: false }))
-          }
-
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
               sceneType,
@@ -237,11 +257,27 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
 
         // close strobe
         if (e.key === ' ' && closeStrobeScenes.length > 0) {
+          if (specialScene && closeStrobeScenes.includes(specialScene)) {
+            if (activeId !== specialScene) {
+              setPrevScene(activeId);
+              dispatch(
+                setActiveScene({
+                  sceneType,
+                  val: specialScene,
+                })
+              )
+              return;
+            }
+            setSpecialScene(undefined);
+          }
+  
           const scene =
             closeStrobeScenes[Math.floor(Math.random() * closeStrobeScenes.length)]
           
           setPrevScene(activeId);
+          setSpecialScene(scene);
 
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
               sceneType,
@@ -269,12 +305,27 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
         }
 
         if (e.key === 'l' && closeLaserScenes.length > 0) {
+          if (specialScene && closeLaserScenes.includes(specialScene)) {
+            if (activeId !== specialScene) {
+              setPrevScene(activeId);
+              dispatch(
+                setActiveScene({
+                  sceneType,
+                  val: specialScene,
+                })
+              )
+              return;
+            }
+            setSpecialScene(undefined);
+          }
+
           const scene =
             closeLaserScenes[
               Math.floor(Math.random() * closeLaserScenes.length)
             ]
           
           setPrevScene(activeId);
+          setSpecialScene(scene);
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
@@ -286,12 +337,25 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
         }
 
         if (e.key === 'd' && closeDiscoScenes.length > 0) {
+          if (specialScene && closeDiscoScenes.includes(specialScene)) {
+            if (activeId !== specialScene) {
+              setPrevScene(activeId);
+              dispatch(
+                setActiveScene({
+                  sceneType,
+                  val: specialScene,
+                })
+              )
+              return;
+            }
+            setSpecialScene(undefined);
+          }
           const scene =
             closeDiscoScenes[
               Math.floor(Math.random() * closeDiscoScenes.length)
             ]
           setPrevScene(activeId);
-
+          setSpecialScene(scene);
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
@@ -336,6 +400,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
       }
 
       const keyUpListener = (e: KeyboardEvent) => {
+        e.preventDefault();
         if (e.key === ' ' && (strobeSceneIds.includes(activeId) || closeStrobeScenes.includes(activeId))) {
           dispatch(setAutoSceneEnabled({ sceneType, val: true }))
           newSceneFromEpicness(epicness)
@@ -367,7 +432,8 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     period,
     bpm,
     beats,
-    prevScene
+    prevScene,
+    specialScene,
   ])
 
   return (
