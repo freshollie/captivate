@@ -377,6 +377,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
         }
 
         if (e.key === 'Escape' && offScene) {
+          setPrevScene(activeId);
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
