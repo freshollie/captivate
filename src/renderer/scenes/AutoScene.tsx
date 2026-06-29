@@ -167,7 +167,7 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
           if (lightScene) {
             return (
               lightScene.autoEnabled &&
-              Math.abs(lightScene.epicness - epicnessLevel) < 0.1
+              Math.abs(lightScene.epicness - epicnessLevel) < 0.08
             )
           }
           return false
@@ -377,7 +377,11 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
         }
 
         if (e.key === 'Escape' && offScene) {
-          setPrevScene(activeId);
+          if (activeId !== offScene) {
+            setPrevScene(activeId);
+          } else {
+            setPrevScene(undefined);
+          }
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
           dispatch(
             setActiveScene({
