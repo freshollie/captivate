@@ -82,6 +82,13 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
     )
   })
 
+  const closeRainbowScenes = useControlSelector((control) => {
+    const ids = control[sceneType].ids
+    return ids.filter((id) =>
+      control[sceneType].byId[id].name.toLowerCase().includes('rainbow') && Math.abs(control[sceneType].byId[id].epicness - epicness) < 0.2
+    )
+  })
+
   const introScenes = useControlSelector((control) => {
     const ids = control[sceneType].ids
     return ids.filter((id) =>
@@ -324,6 +331,36 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
               Math.floor(Math.random() * closeLaserScenes.length)
             ]
           
+          setPrevScene(activeId);
+          setSpecialScene(scene);
+          dispatch(setAutoSceneEnabled({ sceneType, val: false }))
+          dispatch(
+            setActiveScene({
+              sceneType,
+              val: scene,
+            })
+          )
+          return
+        }
+
+        if (e.key === 'r' && closeRainbowScenes.length > 0) {
+          if (specialScene && closeRainbowScenes.includes(specialScene)) {
+            if (activeId !== specialScene) {
+              setPrevScene(activeId);
+              dispatch(
+                setActiveScene({
+                  sceneType,
+                  val: specialScene,
+                })
+              )
+              return;
+            }
+            setSpecialScene(undefined);
+          }
+          const scene =
+            closeRainbowScenes[
+              Math.floor(Math.random() * closeRainbowScenes.length)
+            ]
           setPrevScene(activeId);
           setSpecialScene(scene);
           dispatch(setAutoSceneEnabled({ sceneType, val: false }))
