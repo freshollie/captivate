@@ -15,7 +15,7 @@ import { useRealtimeSelector } from '../redux/realtimeStore'
 import StatusBar from '../menu/StatusBar'
 import React from 'react'
 import useHover from 'renderer/hooks/useHover'
-import { DMX_MAX_VALUE, FixtureChannel, FixtureType } from 'shared/dmxFixtures'
+import { DMX_NUM_CHANNELS, FixtureChannel, FixtureType } from 'shared/dmxFixtures'
 import zIndexes from 'renderer/zIndexes'
 import useMousePosition from 'renderer/hooks/useMousePosition'
 import { getCustomColorChannelName } from 'shared/dmxColors'
@@ -24,7 +24,7 @@ export default function Mixer() {
   const _s = useTypedSelector((state) => state.mixer)
 
   const minIndex = _s.pageIndex * _s.channelsPerPage
-  const maxIndex = Math.min(minIndex + _s.channelsPerPage, DMX_MAX_VALUE)
+  const maxIndex = Math.min(minIndex + _s.channelsPerPage, DMX_NUM_CHANNELS)
   const dmxIndexes: number[] = []
   for (let i = minIndex; i < maxIndex; i++) {
     dmxIndexes.push(i)
@@ -63,7 +63,7 @@ function Header() {
     (state) => state.mixer.overwrites.length > 0
   )
   const canGoBack = _s.pageIndex > 0
-  const canGoForward = (_s.pageIndex + 1) * _s.channelsPerPage < DMX_MAX_VALUE
+  const canGoForward = (_s.pageIndex + 1) * _s.channelsPerPage < DMX_NUM_CHANNELS
 
   return (
     <HeaderRoot>
