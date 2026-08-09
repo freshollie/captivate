@@ -14,8 +14,11 @@ import {
   setLaserToolFromMidiMapping,
 } from './guiSlice'
 import {
+  releaseGroupStrobe,
   setGroupExclusive,
+  setGroupStrobeFlash,
   toggleGroupExclusive,
+  toggleGroupStrobeFlash,
 } from './groupControlSlice'
 import type { SceneType } from '../../shared/Scenes'
 import { msUntilNextBeatBoundary } from '../../shared/sceneBeatQuantize'
@@ -73,6 +76,14 @@ export function fireMidiButtonAction(
     dispatch(setActivePage(action.page))
   } else if (action.type === 'laserTool') {
     dispatch(setLaserToolFromMidiMapping({ tool: action.tool }))
+  } else if (action.type === 'releaseGroupStrobe') {
+    dispatch(releaseGroupStrobe(action.group))
+  } else if (action.type === 'setGroupStrobeFlash') {
+    dispatch(
+      pressed === undefined
+        ? toggleGroupStrobeFlash(action.group)
+        : setGroupStrobeFlash({ group: action.group, pressed })
+    )
   } else if (action.type === 'setGroupExclusive') {
     dispatch(
       pressed === undefined

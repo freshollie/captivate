@@ -26,6 +26,7 @@ import { MixerState } from 'renderer/redux/mixerSlice'
 import {
   clampGroupStrobeValue,
   initGroupControlState,
+  DEFAULT_STROBE_FLASH_LEVEL,
   type GroupControlState,
 } from './groupControl'
 import { ColorChannel, inferColorKind } from './dmxColors'
@@ -1304,13 +1305,27 @@ export function fixGroupControlState(
     if (name.length === 0 || control === undefined || control === null) {
       continue
     }
-    next.byGroup[name] = {
-      brightnessEnabled: control.brightnessEnabled === true,
-      brightness: Number.isFinite(control.brightness)
+    // Brightness used to carry an armed flag. Now it is always live, so a stored
+    // level that was sitting *disarmed* has to come back as full — otherwise
+    // loading the project would silently pull those groups down.
+    const legacyBrightnessDisarmed =
+      (control as { brightnessEnabled?: unknown }).brightnessEnabled === false
+    const brightness =
+      !legacyBrightnessDisarmed && Number.isFinite(control.brightness)
         ? Math.min(1, Math.max(0, control.brightness))
-        : 1,
+        : 1
+
+    // Projects written before the Flash button have no remembered level; fall back
+    // to full so the button does something the first time it is pressed.
+    const flashLevel = Number.isFinite(control.strobeFlashLevel)
+      ? clampGroupStrobeValue(control.strobeFlashLevel)
+      : DEFAULT_STROBE_FLASH_LEVEL
+
+    next.byGroup[name] = {
+      brightness,
       strobeEnabled: control.strobeEnabled === true,
       strobe: clampGroupStrobeValue(control.strobe),
+      strobeFlashLevel: flashLevel > 0 ? flashLevel : DEFAULT_STROBE_FLASH_LEVEL,
       exclusiveEnabled: control.exclusiveEnabled === true,
     }
   }

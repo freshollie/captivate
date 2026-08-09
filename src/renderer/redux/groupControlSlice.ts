@@ -44,17 +44,8 @@ export const groupControlSlice = createSlice({
       state,
       { payload }: PayloadAction<{ group: string; value: number }>
     ) => {
-      const control = controlFor(state, payload.group)
-      control.brightness = clamp01(payload.value)
-      // Moving a fader is an instruction to use it — arming separately every time
-      // would make MIDI and touch control useless.
-      control.brightnessEnabled = true
-    },
-    setGroupBrightnessEnabled: (
-      state,
-      { payload }: PayloadAction<{ group: string; enabled: boolean }>
-    ) => {
-      controlFor(state, payload.group).brightnessEnabled = payload.enabled === true
+      // Always live — full is the released position, so there is nothing to arm.
+      controlFor(state, payload.group).brightness = clamp01(payload.value)
     },
     setGroupStrobe: (
       state,
@@ -62,13 +53,52 @@ export const groupControlSlice = createSlice({
     ) => {
       const control = controlFor(state, payload.group)
       control.strobe = clampGroupStrobeValue(payload.value)
+      // Touching the fader arms it: 0 is a real strobe value, not "off", so the
+      // armed flag is the only thing separating "override" from "leave the scene".
       control.strobeEnabled = true
+      // Remember anything above zero as the level Flash will fire at, so the button
+      // still has something to do once the live value has been released.
+      if (control.strobe > 0) {
+        control.strobeFlashLevel = control.strobe
+      }
     },
-    setGroupStrobeEnabled: (
+    /** Momentary: hold to strobe at the remembered level, let go to drop it. */
+    setGroupStrobeFlash: (
       state,
-      { payload }: PayloadAction<{ group: string; enabled: boolean }>
+      { payload }: PayloadAction<{ group: string; pressed: boolean }>
     ) => {
-      controlFor(state, payload.group).strobeEnabled = payload.enabled === true
+      const control = controlFor(state, payload.group)
+      if (payload.pressed) {
+        control.strobe = clampGroupStrobeValue(control.strobeFlashLevel)
+        control.strobeEnabled = true
+      } else {
+        control.strobeEnabled = false
+        control.strobe = 0
+      }
+    },
+    /** For inputs with no release to report — an on-screen click, a keyboard chord. */
+    toggleGroupStrobeFlash: (state, { payload }: PayloadAction<string>) => {
+      const control = controlFor(state, payload)
+      if (control.strobeEnabled) {
+        control.strobeEnabled = false
+        control.strobe = 0
+      } else {
+        control.strobe = clampGroupStrobeValue(control.strobeFlashLevel)
+        control.strobeEnabled = true
+      }
+    },
+    /** Hand this group's strobe back to the scene. */
+    releaseGroupStrobe: (state, { payload }: PayloadAction<string>) => {
+      const control = controlFor(state, payload)
+      control.strobeEnabled = false
+      control.strobe = 0
+    },
+    releaseAllGroupStrobes: (state) => {
+      for (const control of Object.values(state.byGroup)) {
+        if (control === undefined) continue
+        control.strobeEnabled = false
+        control.strobe = 0
+      }
     },
     setGroupExclusive: (
       state,
@@ -79,12 +109,6 @@ export const groupControlSlice = createSlice({
     toggleGroupExclusive: (state, { payload }: PayloadAction<string>) => {
       const control = controlFor(state, payload)
       control.exclusiveEnabled = !control.exclusiveEnabled
-    },
-    clearGroupControl: (state, { payload }: PayloadAction<string>) => {
-      delete state.byGroup[payload]
-    },
-    clearAllGroupControls: (state) => {
-      state.byGroup = {}
     },
   },
   extraReducers: (builder) => {
@@ -114,13 +138,13 @@ export const groupControlSlice = createSlice({
 
 export const {
   setGroupBrightness,
-  setGroupBrightnessEnabled,
   setGroupStrobe,
-  setGroupStrobeEnabled,
+  setGroupStrobeFlash,
+  toggleGroupStrobeFlash,
+  releaseGroupStrobe,
+  releaseAllGroupStrobes,
   setGroupExclusive,
   toggleGroupExclusive,
-  clearGroupControl,
-  clearAllGroupControls,
 } = groupControlSlice.actions
 
 export default groupControlSlice.reducer

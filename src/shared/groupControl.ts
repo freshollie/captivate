@@ -10,24 +10,27 @@ import { getFixturesInGroups } from './dmxUtil'
  *
  * - **Brightness is proportional, and only touches the master/dimmer channel.** The
  *   scene sets the ceiling and the fader works down from it, so a scene at 50% caps
- *   the group at 50% and a scene at 0 stays dark. At 1.0 the fader is a no-op, which
- *   makes arming one safe. Fixtures with no dimmer do not respond to it.
+ *   the group at 50% and a scene at 0 stays dark. Fixtures with no dimmer do not
+ *   respond to it. It needs no arming or releasing: 1.0 *is* the released state,
+ *   so it is always live and a full fader changes nothing.
  * - **Strobe is a true override.** It writes a raw DMX value the scene engine has no
  *   way to express — `ChannelStrobe` only holds a solid and a strobe constant — so
- *   there is no scene value to scale against.
- *
- * Each control is opt-in. The fader keeps its position while disabled so it can be
- * re-armed at the level it was left at.
+ *   there is no scene value to scale against. Because 0 is a meaningful strobe value
+ *   rather than "off", it needs an explicit armed flag and an explicit release.
  */
 export interface GroupControl {
-  /** Arm the brightness fader. Off = the scene's own level passes through. */
-  brightnessEnabled: boolean
-  /** 0..1, multiplied into the scene's level. 1 = no change. */
+  /** 0..1, multiplied into the scene's level. 1 = no change. Always applied. */
   brightness: number
-  /** Arm the strobe fader. Off = the scene's own strobe passes through. */
+  /** Armed by touching the fader, cleared by Release or a light-scene change. */
   strobeEnabled: boolean
   /** Raw DMX 0..255 written to the group's strobe channels. */
   strobe: number
+  /**
+   * Level the Flash button fires at, remembered from the last value dialled on the
+   * fader. Survives Release and scene changes — those clear the *live* strobe, but
+   * the flash needs something to fire or the button would be inert.
+   */
+  strobeFlashLevel: number
   /**
    * Solo. While any group is exclusive, fixtures outside every exclusive group are
    * held dark. Momentary by design — this is a "hit it for the drop" control.
@@ -35,18 +38,29 @@ export interface GroupControl {
   exclusiveEnabled: boolean
 }
 
+/** Fresh groups flash at full rather than at nothing. */
+export const DEFAULT_STROBE_FLASH_LEVEL = 255
+
 export interface GroupControlState {
   byGroup: { [group: string]: GroupControl | undefined }
 }
 
 export function initGroupControl(): GroupControl {
   return {
-    brightnessEnabled: false,
     brightness: 1,
     strobeEnabled: false,
     strobe: 0,
+    strobeFlashLevel: DEFAULT_STROBE_FLASH_LEVEL,
     exclusiveEnabled: false,
   }
+}
+
+/** Brightness at full is the released state — nothing to undo. */
+export function isGroupBrightnessActive(
+  control: GroupControl | null | undefined
+): boolean {
+  const brightness = control?.brightness
+  return Number.isFinite(brightness) && (brightness as number) < 1
 }
 
 export function initGroupControlState(): GroupControlState {
@@ -58,7 +72,7 @@ export function isGroupControlActive(
 ): boolean {
   if (control === null || control === undefined) return false
   return (
-    control.brightnessEnabled === true ||
+    isGroupBrightnessActive(control) ||
     control.strobeEnabled === true ||
     control.exclusiveEnabled === true
   )
@@ -138,7 +152,7 @@ function resolveOverrides(
 
     for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
       const current = resolved.get(fixture) ?? {}
-      if (control.brightnessEnabled === true) {
+      if (isGroupBrightnessActive(control)) {
         const brightness = clamp01(control.brightness)
         current.brightness =
           current.brightness === undefined

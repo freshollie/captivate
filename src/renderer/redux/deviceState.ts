@@ -99,6 +99,18 @@ interface SetGroupExclusive {
   group: string
 }
 
+/** Hand a group's strobe back to the scene. One-shot. */
+interface ReleaseGroupStrobe {
+  type: 'releaseGroupStrobe'
+  group: string
+}
+
+/** Strobe a group at its remembered level. Momentary: held while the pad is down. */
+interface SetGroupStrobeFlash {
+  type: 'setGroupStrobeFlash'
+  group: string
+}
+
 interface TapTempo {
   type: 'tapTempo'
 }
@@ -166,6 +178,8 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setActivePage',
   'laserTool',
   'setGroupExclusive',
+  'setGroupStrobeFlash',
+  'releaseGroupStrobe',
 ])
 
 /**
@@ -177,6 +191,7 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
  */
 export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
+  'setGroupStrobeFlash',
 ])
 
 export type MidiAction =
@@ -186,6 +201,8 @@ export type MidiAction =
   | SetBaseParam
   | SetGroupControl
   | SetGroupExclusive
+  | SetGroupStrobeFlash
+  | ReleaseGroupStrobe
   | SetBpm
   | TapTempo
   | ToggleAutoScene
@@ -314,7 +331,11 @@ export function getActionID(action: MidiAction) {
   if (action.type === 'setGroupControl') {
     return `${action.type}:${action.control}:${action.group}`
   }
-  if (action.type === 'setGroupExclusive') {
+  if (
+    action.type === 'setGroupExclusive' ||
+    action.type === 'setGroupStrobeFlash' ||
+    action.type === 'releaseGroupStrobe'
+  ) {
     return `${action.type}:${action.group}`
   }
   return action.type

@@ -1,24 +1,24 @@
 import styled from 'styled-components'
 import { useMemo } from 'react'
 import { useDispatch } from 'react-redux'
-import { Button, Switch } from '@mui/material'
+import { Button } from '@mui/material'
 import SliderBase from '../base/SliderBase'
 import { ButtonMidiOverlay, SliderMidiOverlay } from '../base/MidiOverlay'
 import { BriefTooltip } from '../base/appTooltip'
 import StatusBar from '../menu/StatusBar'
 import { useDmxSelector, useTypedSelector } from '../redux/store'
 import {
-  clearAllGroupControls,
-  clearGroupControl,
+  releaseAllGroupStrobes,
+  releaseGroupStrobe,
   setGroupBrightness,
-  setGroupBrightnessEnabled,
   setGroupStrobe,
-  setGroupStrobeEnabled,
   toggleGroupExclusive,
+  toggleGroupStrobeFlash,
 } from '../redux/groupControlSlice'
 import {
   countFixturesInGroup,
   initGroupControl,
+  isGroupBrightnessActive,
   isGroupControlActive,
   type GroupControl,
 } from '../../shared/groupControl'
@@ -100,6 +100,12 @@ function Header({ groupCount }: { groupCount: number }) {
         isGroupControlActive(control)
       ).length
   )
+  const strobeCount = useTypedSelector(
+    (state) =>
+      Object.values(state.groupControl.byGroup).filter(
+        (control) => control?.strobeEnabled === true
+      ).length
+  )
 
   return (
     <HeaderRoot>
@@ -111,15 +117,15 @@ function Header({ groupCount }: { groupCount: number }) {
           {activeCount > 0 ? `, ${activeCount} active` : ''}
         </HeaderSubtitle>
       </HeaderTitleRow>
-      <BriefTooltip title="Release every group override">
+      <BriefTooltip title="Hand every group's strobe back to the scene">
         <span>
           <Button
-            disabled={activeCount === 0}
+            disabled={strobeCount === 0}
             variant="contained"
             size="small"
-            onClick={() => dispatch(clearAllGroupControls())}
+            onClick={() => dispatch(releaseAllGroupStrobes())}
           >
-            Release all
+            Release strobes
           </Button>
         </span>
       </BriefTooltip>
@@ -158,25 +164,21 @@ function GroupCard({
           label="Bright"
           readout={`${Math.round(control.brightness * 100)}%`}
           value={control.brightness}
-          enabled={control.brightnessEnabled}
+          enabled={isGroupBrightnessActive(control)}
           midiAction={{ type: 'setGroupControl', group, control: 'brightness' }}
           tooltip="Scales the master/dimmer channel against the scene — 100% leaves it untouched, a scene at 0 stays dark, and fixtures without a dimmer are unaffected"
           onChange={(value) => dispatch(setGroupBrightness({ group, value }))}
-          onToggle={(enabled) =>
-            dispatch(setGroupBrightnessEnabled({ group, enabled }))
-          }
         />
         <Fader
           label="Strobe"
-          readout={`${control.strobe}`}
+          readout={control.strobeEnabled ? `${control.strobe}` : '--'}
           value={control.strobe / DMX_MAX_VALUE}
           enabled={control.strobeEnabled}
           midiAction={{ type: 'setGroupControl', group, control: 'strobe' }}
-          tooltip="Raw DMX value written to this group's strobe channels (0–255)"
+          tooltip="Raw DMX value written to this group's strobe channels (0–255). Touch to take it over; Release hands it back to the scene."
           onChange={(value) =>
             dispatch(setGroupStrobe({ group, value: value * DMX_MAX_VALUE }))
           }
-          onToggle={(enabled) => dispatch(setGroupStrobeEnabled({ group, enabled }))}
         />
       </FaderRow>
 
@@ -192,17 +194,30 @@ function GroupCard({
             </ExclusiveButton>
           </BriefTooltip>
         </ButtonMidiOverlay>
-        <BriefTooltip title="Release this group back to the scene">
-          <span>
-            <ReleaseButton
-              disabled={!isActive}
+        <ButtonMidiOverlay action={{ type: 'setGroupStrobeFlash', group }}>
+          <BriefTooltip
+            title={`Hold to strobe at ${control.strobeFlashLevel} DMX, let go to drop it. Assign to a MIDI pad to hold it momentarily.`}
+          >
+            <FlashButton
+              $active={control.strobeEnabled}
               size="small"
-              onClick={() => dispatch(clearGroupControl(group))}
+              onClick={() => dispatch(toggleGroupStrobeFlash(group))}
+            >
+              Flash
+            </FlashButton>
+          </BriefTooltip>
+        </ButtonMidiOverlay>
+        <ButtonMidiOverlay action={{ type: 'releaseGroupStrobe', group }}>
+          <BriefTooltip title="Release this group's strobe back to the scene. Assignable to a MIDI pad.">
+            <ReleaseButton
+              $armed={control.strobeEnabled}
+              size="small"
+              onClick={() => dispatch(releaseGroupStrobe(group))}
             >
               Release
             </ReleaseButton>
-          </span>
-        </BriefTooltip>
+          </BriefTooltip>
+        </ButtonMidiOverlay>
       </CardFooter>
     </Card>
   )
@@ -216,17 +231,16 @@ function Fader({
   tooltip,
   midiAction,
   onChange,
-  onToggle,
 }: {
   label: string
   readout: string
   /** Normalized 0..1 track position. */
   value: number
+  /** Purely cosmetic: whether this fader is currently changing the output. */
   enabled: boolean
   tooltip: string
   midiAction: { type: 'setGroupControl'; group: string; control: 'brightness' | 'strobe' }
   onChange: (value: number) => void
-  onToggle: (enabled: boolean) => void
 }) {
   return (
     <FaderCol>
@@ -250,14 +264,6 @@ function Fader({
         </FaderTrack>
       </SliderMidiOverlay>
       <Readout $enabled={enabled}>{readout}</Readout>
-      <BriefTooltip title={enabled ? 'Release to the scene' : 'Take over from the scene'}>
-        <Switch
-          size="small"
-          checked={enabled}
-          onChange={(_, checked) => onToggle(checked)}
-          inputProps={{ 'aria-label': `${label} override active` }}
-        />
-      </BriefTooltip>
     </FaderCol>
   )
 }
@@ -319,8 +325,8 @@ const GroupGrid = styled.div`
 `
 
 const Card = styled.div<{ $active: boolean }>`
-  width: 11rem;
-  height: 17rem;
+  width: 12.5rem;
+  height: 17.5rem;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -420,17 +426,34 @@ const Readout = styled.div<{ $enabled: boolean }>`
 
 const CardFooter = styled.div`
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.2rem;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
 `
 
-const ReleaseButton = styled(Button)`
+const ReleaseButton = styled(Button)<{ $armed: boolean }>`
   && {
     min-width: 0;
     font-size: 0.7rem;
-    padding: 0.05rem 0.6rem;
+    padding: 0.05rem 0.45rem;
+    opacity: ${(p) => (p.$armed ? 1 : 0.45)};
+  }
+`
+
+const FlashButton = styled(Button)<{ $active: boolean }>`
+  && {
+    min-width: 0;
+    font-size: 0.7rem;
+    padding: 0.05rem 0.45rem;
+    color: ${(p) => (p.$active ? '#1a1a1a' : '#cfe3ff')};
+    background: ${(p) => (p.$active ? '#7fb2ff' : '#7fb2ff22')};
+    border: 1px solid ${(p) => (p.$active ? '#7fb2ff' : '#7fb2ff66')};
+
+    &:hover {
+      background: ${(p) => (p.$active ? '#9cc4ff' : '#7fb2ff33')};
+    }
   }
 `
 
@@ -438,7 +461,7 @@ const ExclusiveButton = styled(Button)<{ $active: boolean }>`
   && {
     min-width: 0;
     font-size: 0.7rem;
-    padding: 0.05rem 0.6rem;
+    padding: 0.05rem 0.45rem;
     color: ${(p) => (p.$active ? '#1a1a1a' : '#ffcf9e')};
     background: ${(p) => (p.$active ? '#ff8a4c' : '#ff8a4c22')};
     border: 1px solid ${(p) => (p.$active ? '#ff8a4c' : '#ff8a4c66')};
