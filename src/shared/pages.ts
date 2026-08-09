@@ -10,4 +10,5 @@ export type Page =
   | 'Streaming'
   | 'Share'
   | 'Mixer'
+  | 'Groups'
   | 'Led'

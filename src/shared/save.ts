@@ -2,6 +2,7 @@ import { LightScenes_t, VisualScenes_t } from 'shared/Scenes'
 import { DmxState } from 'renderer/redux/dmxSlice'
 import { DeviceState } from 'renderer/redux/deviceState'
 import { MixerState } from 'renderer/redux/mixerSlice'
+import type { GroupControlState } from './groupControl'
 import type { Page } from './pages'
 import type { VisualizerStreamingSettings } from './visualizerStreaming'
 import { migrateLegacyFixturePersistedJson } from './dmxFixtures'
@@ -26,6 +27,7 @@ export interface SaveState {
   device?: DeviceState
   gui?: ProfileGuiState
   mixer?: MixerState
+  groupControl?: GroupControlState
   laser?: LaserProjectState
 }
 export type SaveType = keyof SaveState
@@ -38,6 +40,7 @@ export const saveTypes: SaveType[] = [
   'device',
   'gui',
   'mixer',
+  'groupControl',
   'laser',
 ]
 export interface SaveInfo {
@@ -88,6 +91,8 @@ export function displaySaveType(saveType: SaveType) {
       return 'App UI Settings'
     case 'mixer':
       return 'DMX Mixer State'
+    case 'groupControl':
+      return 'Group Control Overrides'
     case 'laser':
       return 'Laser Engine (fixtures, zones, scenes)'
   }

@@ -29,6 +29,8 @@ import { indexArray, zip } from '../../shared/util'
 import { TimeState } from '../../shared/TimeState'
 import { SplitState } from 'renderer/redux/realtimeStore'
 import { getUniverseOverwrites } from '../../renderer/redux/mixerSlice'
+import { applyGroupControlsToUniverse } from '../../shared/groupControl'
+import { telemetryEvent } from '../telemetry'
 import { getMoverPhaseOrderEntries } from '../../renderer/redux/dmxSlice'
 import { clampNormalized } from '../../math/util'
 import { getParam, type Params } from '../../shared/params'
@@ -988,6 +990,24 @@ function getMapCalibrationOverrideForChannel(
   )
 }
 
+let _lastGroupControlWarnAtMs = 0
+
+/** Rate-limited: this would otherwise log on every frame of every universe. */
+function reportGroupControlFailure(error: unknown): void {
+  const nowMs = Date.now()
+  if (nowMs - _lastGroupControlWarnAtMs < 5000) return
+  _lastGroupControlWarnAtMs = nowMs
+  const err = error as Error | undefined
+  console.error('Group control failed; scene output left untouched:', err)
+  telemetryEvent(
+    'engine.dmx',
+    'group-control-error',
+    'error',
+    err?.message ?? String(error),
+    { stack: err?.stack }
+  )
+}
+
 function calculateDmxForUniverse(
   state: CleanReduxState,
   splitStates: SplitState[],
@@ -1287,6 +1307,17 @@ function calculateDmxForUniverse(
       )
     }
     }
+  }
+
+  // Group faders override whatever the scene produced, including for fixtures the
+  // active scene never touched. The mixer's per-channel overwrites still win below.
+  //
+  // Guarded: this runs on every frame of every universe, so a fault in one optional
+  // feature must never be able to take the whole rig dark mid-show.
+  try {
+    applyGroupControlsToUniverse(channels, all_fixtures, state.groupControl)
+  } catch (error) {
+    reportGroupControlFailure(error)
   }
 
   // Apply any overwrites last.

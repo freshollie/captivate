@@ -86,6 +86,19 @@ export function getSetBaseParamSplitIndex(action: SetBaseParam): number {
   return action.splitIndex ?? 0
 }
 
+/** Live per-group override fader (Groups page). Independent of scenes and splits. */
+interface SetGroupControl {
+  type: 'setGroupControl'
+  group: string
+  control: 'brightness' | 'strobe'
+}
+
+/** Solo a group. Momentary under MIDI: held while the pad is down. */
+interface SetGroupExclusive {
+  type: 'setGroupExclusive'
+  group: string
+}
+
 interface TapTempo {
   type: 'tapTempo'
 }
@@ -152,6 +165,18 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'triggerAtmosFixture',
   'setActivePage',
   'laserTool',
+  'setGroupExclusive',
+])
+
+/**
+ * Button actions that follow the pad rather than latching on each press: they engage
+ * on note-on / CC-up and release on note-off / CC-down.
+ *
+ * Inputs that cannot express a release — keyboard shortcuts, on-screen clicks — fall
+ * back to toggling, so the state can never get stuck on.
+ */
+export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
+  'setGroupExclusive',
 ])
 
 export type MidiAction =
@@ -159,6 +184,8 @@ export type MidiAction =
   | SetAutoSceneBombacity
   | SetMaster
   | SetBaseParam
+  | SetGroupControl
+  | SetGroupExclusive
   | SetBpm
   | TapTempo
   | ToggleAutoScene
@@ -178,6 +205,22 @@ export function getMidiSliderBounds(action: MidiAction): MidiSliderBounds {
         max: 1000,
         defaultMin: 60,
         defaultMax: 180,
+      }
+    case 'setGroupControl':
+      // Group strobe is a raw DMX value, not a normalized level.
+      if (action.control === 'strobe') {
+        return {
+          min: 0,
+          max: 255,
+          defaultMin: 0,
+          defaultMax: 255,
+        }
+      }
+      return {
+        min: 0,
+        max: 1,
+        defaultMin: 0,
+        defaultMax: 1,
       }
     default:
       return {
@@ -267,6 +310,12 @@ export function getActionID(action: MidiAction) {
   }
   if (action.type === 'laserTool') {
     return action.type + action.tool
+  }
+  if (action.type === 'setGroupControl') {
+    return `${action.type}:${action.control}:${action.group}`
+  }
+  if (action.type === 'setGroupExclusive') {
+    return `${action.type}:${action.group}`
   }
   return action.type
 }

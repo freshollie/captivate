@@ -11,6 +11,9 @@ import laserReducer from './laserSlice'
 import controlReducer, { ControlState } from './controlSlice'
 import { LightScene_t, VisualScene_t, SceneType, initLightScene } from '../../shared/Scenes'
 import mixerReducer, { initMixerState } from './mixerSlice'
+import groupControlReducer, {
+  initGroupControlState,
+} from './groupControlSlice'
 import undoable, { StateWithHistory } from 'redux-undo'
 import { DeviceState, initDeviceState } from './deviceState'
 import fixState, { fixDeviceState } from '../../shared/fixState'
@@ -63,6 +66,7 @@ const baseReducer = combineReducers({
     redoType: undoActionTypes.control.redo,
   }),
   mixer: mixerReducer,
+  groupControl: groupControlReducer,
   laser: laserReducer,
 })
 
@@ -144,6 +148,10 @@ export function mergeProjectSave(
       info.config.mixer && info.state.mixer
         ? { ...initMixerState(), ...cloneDeep(info.state.mixer) }
         : cloneDeep(state.mixer),
+    groupControl:
+      info.config.groupControl && info.state.groupControl
+        ? { ...initGroupControlState(), ...cloneDeep(info.state.groupControl) }
+        : cloneDeep(state.groupControl),
     laser:
       info.config.laser && info.state.laser
         ? migrateLaserProjectState(cloneDeep(info.state.laser))
@@ -226,6 +234,7 @@ const rootReducer: Reducer<ReduxState, PayloadAction<any>> = (
       gui: sanitizeGuiTransientState(cleanState.gui),
       control: initUndoState(cleanState.control),
       mixer: cleanState.mixer,
+      groupControl: cleanState.groupControl,
       laser: migrateLaserProjectState(cleanState.laser ?? initLaserState()),
     }
   } else if (action.type === RESET_REMOTE_STATE) {
@@ -275,6 +284,7 @@ const rootReducer: Reducer<ReduxState, PayloadAction<any>> = (
       },
       control: initUndoState(cleanState.control),
       mixer: cleanState.mixer,
+      groupControl: cleanState.groupControl,
       laser: migrateLaserProjectState(cleanState.laser ?? initLaserState()),
     }
   } else if (action.type === RESET_UNIVERSE) {
@@ -308,6 +318,7 @@ const rootReducer: Reducer<ReduxState, PayloadAction<any>> = (
         projectWorkspace: state.gui.projectWorkspace,
       },
       mixer: cleanState.mixer,
+      groupControl: cleanState.groupControl,
       laser: cleanState.laser,
     }
   }
@@ -334,6 +345,7 @@ export function getCleanReduxState(state: ReduxState) {
     gui: sanitizeGuiTransientState(state.gui),
     control: state.control.present,
     mixer: state.mixer,
+    groupControl: state.groupControl,
     laser: state.laser,
   }
 }

@@ -12,6 +12,7 @@ import AtmosphericsPage from './pages/Atmospherics'
 import LaserProxy, { LaserAlphaPage } from './pages/Laser'
 import Share from './pages/Share'
 import Mixer from './pages/Mixer'
+import GroupControlPage from './pages/GroupControlPage'
 import MenuBar from './menu/MenuBar'
 import Visualizer from './visualizer/Visualizer'
 import DetachedVisualizerFullscreenBar from './visualizer/DetachedVisualizerFullscreenBar'
@@ -80,6 +81,7 @@ export default function App() {
     if (activePage == 'Streaming') return <VisualizerProxy />
     if (activePage == 'Share') return <Share />
     if (activePage == 'Mixer') return <Mixer />
+    if (activePage == 'Groups') return <GroupControlPage />
     if (activePage == 'Led') return <LedPage />
     console.error(`Bad activePage value: ${activePage}`)
     return null

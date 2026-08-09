@@ -218,6 +218,7 @@ function isKnownPage(value: Page) {
     value === 'Streaming' ||
     value === 'Share' ||
     value === 'Mixer' ||
+    value === 'Groups' ||
     value === 'Led'
   )
 }

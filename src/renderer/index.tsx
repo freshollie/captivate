@@ -226,6 +226,11 @@ function controlPublishAffectsLiveDmx(actionType: string | null): boolean {
   if (actionType.startsWith('control/')) {
     return true
   }
+  // Group faders are live overrides on the way to the wire — debouncing them would
+  // make the page feel laggy against the lights.
+  if (actionType.startsWith('groupControl/')) {
+    return true
+  }
   return IMMEDIATE_DMX_PUBLISH_ACTION_TYPES.has(actionType)
 }
 
@@ -244,6 +249,7 @@ function shouldForwardActionToPrimary(action: unknown) {
   if (type.startsWith('laser/')) return true
   if (SHARED_GUI_ACTION_TYPES.has(type)) return true
   if (SHARED_MIXER_ACTION_TYPES.has(type)) return true
+  if (type.startsWith('groupControl/')) return true
   return false
 }
 
@@ -277,6 +283,7 @@ function parsePageFromLocation(): Page | null {
     'Streaming',
     'Share',
     'Mixer',
+    'Groups',
     'Led',
   ]
   if (page && validPages.includes(page as Page)) {

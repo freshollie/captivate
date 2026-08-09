@@ -8,6 +8,7 @@ import WbIncandescentIcon from '@mui/icons-material/WbIncandescent'
 import AirIcon from '@mui/icons-material/Air'
 import VisualsIcon from '../images/Thick.png'
 import MixerIcon from '@mui/icons-material/BarChart'
+import GroupsIcon from '@mui/icons-material/Tune'
 import { useDmxSelector, useTypedSelector } from '../redux/store'
 import { useDispatch } from 'react-redux'
 import { setActivePage, Page } from '../redux/guiSlice'
@@ -28,6 +29,7 @@ type SidebarAccent =
   | 'modulation'
   | 'visualizer'
   | 'mixer'
+  | 'groups'
   | 'atmos'
 
 function accentColors(accent: SidebarAccent) {
@@ -67,6 +69,12 @@ function accentColors(accent: SidebarAccent) {
         base: 'linear-gradient(180deg, rgba(120, 220, 130, 0.22), rgba(120, 220, 130, 0.08))',
         active: 'linear-gradient(180deg, rgba(120, 220, 130, 0.56), rgba(120, 220, 130, 0.2))',
         border: '#78dc82',
+      }
+    case 'groups':
+      return {
+        base: 'linear-gradient(180deg, rgba(255, 138, 76, 0.22), rgba(255, 138, 76, 0.08))',
+        active: 'linear-gradient(180deg, rgba(255, 138, 76, 0.58), rgba(255, 138, 76, 0.2))',
+        border: '#ff8a4c',
       }
     case 'atmos':
       return {
@@ -165,6 +173,13 @@ export default function MenuBar() {
       </Tooltip>
       <MenuItem page="Mixer" tooltipText="Live DMX channel overrides" accent="mixer">
         <MixerIcon fontSize="inherit" />
+      </MenuItem>
+      <MenuItem
+        page="Groups"
+        tooltipText="Live brightness & strobe overrides per group"
+        accent="groups"
+      >
+        <GroupsIcon fontSize="inherit" />
       </MenuItem>
       {hasAtmosphericsFixtures && (
         <MenuItem page="Atmospherics" tooltipText="Atmosphere & FX triggers" accent="atmos">

@@ -23,6 +23,11 @@ import {
   migrateLaserProjectState,
 } from '../renderer/laser/laserProjectState'
 import { MixerState } from 'renderer/redux/mixerSlice'
+import {
+  clampGroupStrobeValue,
+  initGroupControlState,
+  type GroupControlState,
+} from './groupControl'
 import { ColorChannel, inferColorKind } from './dmxColors'
 import {
   DmxValue,
@@ -451,6 +456,7 @@ export default function fixState(state: CleanReduxState): CleanReduxState {
   )
   fixDeviceState(state.control.device)
   fixMixerState(state.mixer)
+  fixGroupControlState(state)
 
   const selectedFixtureIndex = state.dmx.activeFixture
   const selectedFixture =
@@ -1272,6 +1278,44 @@ export function fixMixerState(mixerState: MixerState) {
   ) {
     mixer.overwritesByUniverse[1] = mixer.overwrites
   }
+}
+
+/**
+ * Group controls arrive from project files that predate the feature, or that a user
+ * has hand-edited. Anything unusable is dropped rather than carried into the engine,
+ * where a stray NaN would ride straight out to a light.
+ */
+export function fixGroupControlState(
+  state: CleanReduxState
+): void {
+  const existing = state.groupControl as GroupControlState | null | undefined
+  const next = initGroupControlState()
+
+  // `existing` may be null, or an object with no `byGroup` — optional chaining
+  // rather than a truthiness ladder, which is easy to get wrong on null.
+  const rawByGroup = existing?.byGroup
+  const byGroup =
+    rawByGroup !== null && rawByGroup !== undefined && typeof rawByGroup === 'object'
+      ? rawByGroup
+      : {}
+
+  for (const [group, control] of Object.entries(byGroup)) {
+    const name = group.trim()
+    if (name.length === 0 || control === undefined || control === null) {
+      continue
+    }
+    next.byGroup[name] = {
+      brightnessEnabled: control.brightnessEnabled === true,
+      brightness: Number.isFinite(control.brightness)
+        ? Math.min(1, Math.max(0, control.brightness))
+        : 1,
+      strobeEnabled: control.strobeEnabled === true,
+      strobe: clampGroupStrobeValue(control.strobe),
+      exclusiveEnabled: control.exclusiveEnabled === true,
+    }
+  }
+
+  state.groupControl = next
 }
 
 function fixtureTypes(dmx: DmxState) {

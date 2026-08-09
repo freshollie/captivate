@@ -13,6 +13,10 @@ import {
   setActivePage,
   setLaserToolFromMidiMapping,
 } from './guiSlice'
+import {
+  setGroupExclusive,
+  toggleGroupExclusive,
+} from './groupControlSlice'
 import type { SceneType } from '../../shared/Scenes'
 import { msUntilNextBeatBoundary } from '../../shared/sceneBeatQuantize'
 
@@ -29,7 +33,13 @@ export function fireMidiButtonAction(
   state: CleanReduxState,
   rt_state: RealtimeState,
   action: MidiAction,
-  tapTempo: () => void
+  tapTempo: () => void,
+  /**
+   * Press state for momentary actions. Leave undefined for inputs that have no
+   * release to report (keyboard, on-screen click) — those toggle instead, so the
+   * action cannot latch on with no way to clear it.
+   */
+  pressed?: boolean
 ): void {
   if (action.type === 'setActiveSceneIndex') {
     const sceneType = action.sceneType
@@ -63,5 +73,11 @@ export function fireMidiButtonAction(
     dispatch(setActivePage(action.page))
   } else if (action.type === 'laserTool') {
     dispatch(setLaserToolFromMidiMapping({ tool: action.tool }))
+  } else if (action.type === 'setGroupExclusive') {
+    dispatch(
+      pressed === undefined
+        ? toggleGroupExclusive(action.group)
+        : setGroupExclusive({ group: action.group, enabled: pressed })
+    )
   }
 }

@@ -3,6 +3,7 @@ import { CleanReduxState } from '../../renderer/redux/store'
 import { RealtimeState } from '../../renderer/redux/realtimeStore'
 import {
   buttonMidiActionTypes,
+  momentaryMidiActionTypes,
   getActionID,
   getSetBaseParamSplitIndex,
   SliderAction,
@@ -23,6 +24,10 @@ import {
   setMoverFollowOverridePan,
   setMoverFollowOverrideTilt,
 } from '../../renderer/redux/guiSlice'
+import {
+  setGroupBrightness,
+  setGroupStrobe,
+} from '../../renderer/redux/groupControlSlice'
 import NodeLink from 'node-link'
 import { PayloadAction } from '@reduxjs/toolkit'
 
@@ -134,22 +139,51 @@ export function handleMessage(
 
   if (buttonAction) {
     const actionKey = `${input.id}:${getActionID(buttonAction.action)}`
+    const isMomentary = momentaryMidiActionTypes.has(buttonAction.action.type)
 
-    const fireButtonAction = () => {
-      fireMidiButtonAction(dispatch, state, rt_state, buttonAction.action, tapTempo)
+    const fireButtonAction = (pressed?: boolean) => {
+      fireMidiButtonAction(
+        dispatch,
+        state,
+        rt_state,
+        buttonAction.action,
+        tapTempo,
+        pressed
+      )
     }
 
     if (input.message.type === 'CC') {
       const pressed = input.message.value >= 64
       const wasPressed = buttonThresholdState.get(actionKey) === true
       buttonThresholdState.set(actionKey, pressed)
-      if (pressed && !wasPressed) {
+      if (isMomentary) {
+        // Follow the pad in both directions.
+        if (pressed !== wasPressed) {
+          fireButtonAction(pressed)
+        }
+      } else if (pressed && !wasPressed) {
         fireButtonAction()
       }
     } else if (input.message.type === 'On') {
-      fireButtonAction()
+      if (isMomentary) {
+        // Plenty of controllers send note-on with velocity 0 rather than a note-off.
+        // Only momentary actions read velocity that way — latching actions keep
+        // firing on any note-on, exactly as they did before.
+        const pressed = input.message.velocity > 0
+        const wasPressed = buttonThresholdState.get(actionKey) === true
+        buttonThresholdState.set(actionKey, pressed)
+        if (pressed !== wasPressed) {
+          fireButtonAction(pressed)
+        }
+      } else {
+        fireButtonAction()
+      }
     } else {
+      const wasPressed = buttonThresholdState.get(actionKey) === true
       buttonThresholdState.set(actionKey, false)
+      if (isMomentary && wasPressed) {
+        fireButtonAction(false)
+      }
     }
   }
 
@@ -177,6 +211,12 @@ export function handleMessage(
       )
     } else if (action.type === 'setMaster') {
       return state.control.master
+    } else if (action.type === 'setGroupControl') {
+      const control = state.groupControl?.byGroup[action.group]
+      if (control === undefined) {
+        return action.control === 'strobe' ? 0 : 1
+      }
+      return action.control === 'strobe' ? control.strobe : control.brightness
     } else if (action.type === 'setMoverFollowOverridePan') {
       return state.gui.moverFollowOverridePan
     } else if (action.type === 'setMoverFollowOverrideTilt') {
@@ -206,6 +246,12 @@ export function handleMessage(
             [action.paramKey]: bounded,
           },
         })
+      )
+    } else if (action.type === 'setGroupControl') {
+      dispatch(
+        action.control === 'strobe'
+          ? setGroupStrobe({ group: action.group, value: bounded })
+          : setGroupBrightness({ group: action.group, value: bounded })
       )
     } else if (action.type === 'setBpm') {
       nodeLink.setTempo(bounded)

@@ -144,6 +144,7 @@ export function isRemoteDispatchAllowed(action: unknown): boolean {
   if (type.startsWith('scenes/')) return true
   if (SHARED_GUI_ACTION_TYPES.has(type)) return true
   if (SHARED_MIXER_ACTION_TYPES.has(type)) return true
+  if (type.startsWith('groupControl/')) return true
   return false
 }
 
