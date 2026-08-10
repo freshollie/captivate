@@ -49,7 +49,49 @@ export interface GroupControl {
    * the programming changes, so letting go restores it exactly.
    */
   blinderActive: boolean
+  /**
+   * Whether the master controls reach this group. Opt-out rather than opt-in, so a
+   * newly created group behaves like the rest of the rig; clear it for anything that
+   * must ignore the master dimmer, strobe and blinder (house lights, practicals).
+   */
+  followMaster: boolean
 }
+
+/**
+ * Controls that sit on top of every group that follows them.
+ *
+ * The dimmer is a second multiplier rather than a replacement — group 50% under
+ * master 50% gives 25% — so the master trims the rig without disturbing the balance
+ * between groups.
+ */
+export interface GroupMasterControl {
+  /** 0..1, multiplied on top of each following group's own dimmer. */
+  brightness: number
+  /**
+   * Momentary: held while the master strobe button is down. Fires every following
+   * group's own flash rather than a level of its own, so each group strobes at the
+   * value dialled on its card.
+   */
+  strobeActive: boolean
+  /** Momentary: held while the master blinder button is down. */
+  blinderActive: boolean
+}
+
+export function initGroupMasterControl(): GroupMasterControl {
+  return {
+    brightness: 1,
+    strobeActive: false,
+    blinderActive: false,
+  }
+}
+
+/**
+ * Runtime key for the master's blinder, kept alongside the per-group ones.
+ *
+ * Prefixed with a character no fixture group name can contain, so it can never
+ * collide with a real group.
+ */
+export const MASTER_BLINDER_KEY = '\u0000master'
 
 /** Fresh groups flash at full rather than at nothing. */
 export const DEFAULT_STROBE_FLASH_LEVEL = 255
@@ -58,6 +100,7 @@ export interface GroupControlState {
   byGroup: { [group: string]: GroupControl | undefined }
   /** How long a blinder takes to fade out after release, in beats. Global. */
   blinderFadeBeats: number
+  master: GroupMasterControl
 }
 
 /** Matches the saturation threshold the scene renderer uses to pick a white slot. */
@@ -125,10 +168,15 @@ export function advanceBlinderLevels(
     ...Object.keys(byGroup),
     ...Object.keys(runtime.fadeStartMs),
     ...Object.keys(runtime.heldLastFrame),
+    MASTER_BLINDER_KEY,
   ])
 
   for (const group of groups) {
-    const held = byGroup[group]?.blinderActive === true
+    // The master rides the same fade machinery as a group, under a reserved key.
+    const held =
+      group === MASTER_BLINDER_KEY
+        ? safeMaster(groupControl).blinderActive === true
+        : byGroup[group]?.blinderActive === true
 
     if (held) {
       runtime.heldLastFrame[group] = true
@@ -176,6 +224,7 @@ export function initGroupControl(): GroupControl {
     strobeFlashActive: false,
     exclusiveEnabled: false,
     blinderActive: false,
+    followMaster: true,
   }
 }
 
@@ -212,7 +261,65 @@ export function isGroupBrightnessActive(
 }
 
 export function initGroupControlState(): GroupControlState {
-  return { byGroup: {}, blinderFadeBeats: DEFAULT_BLINDER_FADE_BEATS }
+  return {
+    byGroup: {},
+    blinderFadeBeats: DEFAULT_BLINDER_FADE_BEATS,
+    master: initGroupMasterControl(),
+  }
+}
+
+function safeMaster(
+  state: GroupControlState | null | undefined
+): GroupMasterControl {
+  const master = state?.master
+  if (master === null || master === undefined || typeof master !== 'object') {
+    return initGroupMasterControl()
+  }
+  return master
+}
+
+/**
+ * Fixtures the master must not touch.
+ *
+ * Membership is resolved per physical fixture: opting a group out means those lights
+ * ignore the master, even if they also sit in a group that follows it. The safer
+ * reading — an explicit opt-out should not be undone by an unrelated membership.
+ */
+function masterExemptFixtures(
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): Set<FlattenedFixture> {
+  const byGroup = safeByGroup(groupControl)
+  const exempt = new Set<FlattenedFixture>()
+  const exemptIds = new Set<string>()
+
+  for (const group of Object.keys(byGroup)) {
+    if (byGroup[group]?.followMaster !== false) continue
+    for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
+      exempt.add(fixture)
+      const id = fixture.fixtureId?.trim()
+      if (id !== undefined && id.length > 0) exemptIds.add(id)
+    }
+  }
+
+  if (exemptIds.size > 0) {
+    for (const fixture of universeFixtures) {
+      const id = fixture.fixtureId?.trim()
+      if (id !== undefined && id.length > 0 && exemptIds.has(id)) exempt.add(fixture)
+    }
+  }
+
+  return exempt
+}
+
+/** Fixtures the master controls apply to. */
+function masterFixtures(
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): FlattenedFixture[] {
+  const exempt = masterExemptFixtures(universeFixtures, groupControl)
+  if (exempt.size === 0) return universeFixtures
+  return universeFixtures.filter((fixture) => !exempt.has(fixture))
 }
 
 export function isGroupControlActive(
@@ -565,17 +672,22 @@ function blinderWhiteContribution(channel: FixtureChannel): 'full' | null {
 function applyBlinder(
   channels: number[],
   universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined,
   blinderLevels: { [group: string]: number }
 ): void {
   const groups = Object.keys(blinderLevels)
   if (groups.length === 0) return
 
-  // A fixture in two blinding groups takes the brighter of the two.
+  // A fixture blinding from two sources takes the brighter of the two.
   const levelByFixture = new Map<FlattenedFixture, number>()
   for (const group of groups) {
     const level = clamp01(blinderLevels[group] ?? 0)
     if (level <= 0) continue
-    for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
+    const targets =
+      group === MASTER_BLINDER_KEY
+        ? masterFixtures(universeFixtures, groupControl)
+        : getFixturesInGroups(universeFixtures, { [group]: true })
+    for (const fixture of targets) {
       const existing = levelByFixture.get(fixture)
       if (existing === undefined || level > existing) {
         levelByFixture.set(fixture, level)
@@ -614,6 +726,79 @@ function applyBlinder(
 }
 
 /**
+ * Layer the master dimmer and strobe over the groups that follow them.
+ *
+ * The dimmer multiplies whatever the group faders already produced, so the two
+ * compose: 50% under 50% is 25%. It runs after group brightness for exactly that
+ * reason, and touches only master/dimmer channels, matching the group rule.
+ */
+function applyMaster(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): void {
+  const master = safeMaster(groupControl)
+  const brightness = clamp01(
+    Number.isFinite(master.brightness) ? master.brightness : 1
+  )
+  const strobing = master.strobeActive === true
+  const dimming = brightness < 1
+  if (!strobing && !dimming) return
+
+  const following = masterFixtures(universeFixtures, groupControl)
+  const strobeLevels = strobing
+    ? masterStrobeLevelByFixture(following, groupControl)
+    : null
+
+  for (const fixture of following) {
+    const strobeValue = strobeLevels?.get(fixture)
+    for (const [channelIdx, channel] of fixture.channels) {
+      if (dimming) {
+        applyBrightnessToChannel(channels, channelIdx, channel, brightness)
+      }
+      if (strobeValue !== undefined) {
+        applyStrobeToChannel(channels, channelIdx, channel, strobeValue)
+      }
+    }
+  }
+}
+
+/**
+ * What each fixture strobes at when the master strobe is held.
+ *
+ * The master fires the groups' own flashes rather than a level of its own, so a
+ * fixture strobes at the level dialled on its card. A fixture in several groups takes
+ * the brightest of them; one in no configured group still strobes, at the same
+ * default a fresh card would flash at.
+ */
+function masterStrobeLevelByFixture(
+  followingFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): Map<FlattenedFixture, number> {
+  const byGroup = safeByGroup(groupControl)
+  const following = new Set(followingFixtures)
+  const levels = new Map<FlattenedFixture, number>()
+
+  for (const group of Object.keys(byGroup)) {
+    const control = byGroup[group]
+    if (control === null || control === undefined) continue
+    if (control.followMaster === false) continue
+    const level = clampGroupStrobeValue(control.strobeFlashLevel)
+    for (const fixture of getFixturesInGroups(followingFixtures, { [group]: true })) {
+      if (!following.has(fixture)) continue
+      const existing = levels.get(fixture)
+      if (existing === undefined || level > existing) levels.set(fixture, level)
+    }
+  }
+
+  for (const fixture of followingFixtures) {
+    if (!levels.has(fixture)) levels.set(fixture, DEFAULT_STROBE_FLASH_LEVEL)
+  }
+
+  return levels
+}
+
+/**
  * Apply the armed group controls to a finished universe buffer.
  *
  * Runs after the scene has been rendered and before the DMX mixer's per-channel
@@ -627,9 +812,20 @@ export function applyGroupControlsToUniverse(
   blinderLevels: { [group: string]: number } = {}
 ): void {
   const hasBlinder = Object.keys(blinderLevels).length > 0
-  // A blinder mid-fade keeps rendering after its button is up, so the early-out
-  // cannot rely on the armed-control list alone.
-  if (!hasBlinder && activeGroupControlNames(groupControl).length === 0) return
+  const master = safeMaster(groupControl)
+  const hasMaster =
+    master.strobeActive === true ||
+    (Number.isFinite(master.brightness) && master.brightness < 1)
+  // A blinder mid-fade keeps rendering after its button is up, and the master acts
+  // on groups that may have no entry at all, so the early-out cannot rely on the
+  // armed-control list alone.
+  if (
+    !hasBlinder &&
+    !hasMaster &&
+    activeGroupControlNames(groupControl).length === 0
+  ) {
+    return
+  }
 
   const resolved = resolveOverrides(universeFixtures, groupControl)
 
@@ -644,10 +840,13 @@ export function applyGroupControlsToUniverse(
     }
   }
 
+  // The master layers on top of the per-group faders, never replacing them.
+  applyMaster(channels, universeFixtures, groupControl)
+
   // Solo wins over any level the faders above just set...
   applyExclusiveBlackout(channels, universeFixtures, groupControl)
   // ...and the blinder wins over everything, including a solo blackout.
-  applyBlinder(channels, universeFixtures, blinderLevels)
+  applyBlinder(channels, universeFixtures, groupControl, blinderLevels)
 }
 
 /** Fixture count a group control will actually reach, for the UI. */

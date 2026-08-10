@@ -30,6 +30,7 @@ import {
   DEFAULT_BLINDER_FADE_BEATS,
   DEFAULT_STROBE_FLASH_LEVEL,
   type GroupControlState,
+  type GroupMasterControl,
 } from './groupControl'
 import { ColorChannel, inferColorKind } from './dmxColors'
 import {
@@ -1335,6 +1336,8 @@ export function fixGroupControlState(
       strobeFlashActive: false,
       exclusiveEnabled: false,
       blinderActive: false,
+      // Opt-out, so a group written before the master existed still follows it.
+      followMaster: control.followMaster !== false,
     }
   }
 
@@ -1342,6 +1345,17 @@ export function fixGroupControlState(
   // became a fade time; read it as a fallback so a project saved mid-change loads.
   const legacyFade = (existing as { blinderPeriodBeats?: unknown } | null | undefined)
     ?.blinderPeriodBeats
+  const master = (existing as { master?: Partial<GroupMasterControl> } | null | undefined)
+    ?.master
+  next.master = {
+    brightness: Number.isFinite(master?.brightness)
+      ? Math.min(1, Math.max(0, master!.brightness as number))
+      : 1,
+    // Momentary, same as the per-group gestures: never restored.
+    strobeActive: false,
+    blinderActive: false,
+  }
+
   next.blinderFadeBeats = clampBlinderFadeBeats(
     existing?.blinderFadeBeats ??
       (typeof legacyFade === 'number' ? legacyFade : DEFAULT_BLINDER_FADE_BEATS)

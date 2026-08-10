@@ -27,6 +27,7 @@ import {
 import {
   setGroupBrightness,
   setGroupStrobe,
+  setMasterBrightness,
 } from '../../renderer/redux/groupControlSlice'
 import NodeLink from 'node-link'
 import { PayloadAction } from '@reduxjs/toolkit'
@@ -211,6 +212,8 @@ export function handleMessage(
       )
     } else if (action.type === 'setMaster') {
       return state.control.master
+    } else if (action.type === 'setGroupMasterDimmer') {
+      return state.groupControl?.master?.brightness ?? 1
     } else if (action.type === 'setGroupControl') {
       const control = state.groupControl?.byGroup[action.group]
       if (control === undefined) {
@@ -253,6 +256,8 @@ export function handleMessage(
           ? setGroupStrobe({ group: action.group, value: bounded })
           : setGroupBrightness({ group: action.group, value: bounded })
       )
+    } else if (action.type === 'setGroupMasterDimmer') {
+      dispatch(setMasterBrightness(bounded))
     } else if (action.type === 'setBpm') {
       nodeLink.setTempo(bounded)
     } else if (action.type === 'tapTempo') {

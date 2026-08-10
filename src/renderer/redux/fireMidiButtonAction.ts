@@ -18,9 +18,14 @@ import {
   setGroupExclusive,
   setGroupBlinder,
   setGroupStrobeFlash,
+  releaseAllLiveOverrides,
+  setMasterBlinder,
+  setMasterStrobe,
   toggleGroupBlinder,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
+  toggleMasterBlinder,
+  toggleMasterStrobe,
 } from './groupControlSlice'
 import type { SceneType } from '../../shared/Scenes'
 import { msUntilNextBeatBoundary } from '../../shared/sceneBeatQuantize'
@@ -91,6 +96,16 @@ export function fireMidiButtonAction(
       pressed === undefined
         ? toggleGroupBlinder(action.group)
         : setGroupBlinder({ group: action.group, pressed })
+    )
+  } else if (action.type === 'releaseAllGroupOverrides') {
+    dispatch(releaseAllLiveOverrides())
+  } else if (action.type === 'setGroupMasterStrobe') {
+    dispatch(
+      pressed === undefined ? toggleMasterStrobe() : setMasterStrobe(pressed)
+    )
+  } else if (action.type === 'setGroupMasterBlinder') {
+    dispatch(
+      pressed === undefined ? toggleMasterBlinder() : setMasterBlinder(pressed)
     )
   } else if (action.type === 'setGroupExclusive') {
     dispatch(

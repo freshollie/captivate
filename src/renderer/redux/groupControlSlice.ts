@@ -111,6 +111,10 @@ export const groupControlSlice = createSlice({
      * so it is left alone.
      */
     releaseAllLiveOverrides: (state) => {
+      // Master strobe and blinder are overrides and go; the master dimmer is a
+      // trim, like each group's own, and is left where the operator set it.
+      state.master.strobeActive = false
+      state.master.blinderActive = false
       for (const control of Object.values(state.byGroup)) {
         if (control === undefined) continue
         control.strobeEnabled = false
@@ -142,6 +146,29 @@ export const groupControlSlice = createSlice({
     },
     setBlinderFadeBeats: (state, { payload }: PayloadAction<number>) => {
       state.blinderFadeBeats = clampBlinderFadeBeats(payload)
+    },
+    setGroupFollowMaster: (
+      state,
+      { payload }: PayloadAction<{ group: string; follow: boolean }>
+    ) => {
+      controlFor(state, payload.group).followMaster = payload.follow === true
+    },
+    setMasterBrightness: (state, { payload }: PayloadAction<number>) => {
+      state.master.brightness = clamp01(payload)
+    },
+    /** Momentary: hold to strobe every following group. */
+    setMasterStrobe: (state, { payload }: PayloadAction<boolean>) => {
+      state.master.strobeActive = payload === true
+    },
+    toggleMasterStrobe: (state) => {
+      state.master.strobeActive = !state.master.strobeActive
+    },
+    /** Momentary: hold to blind every following group. */
+    setMasterBlinder: (state, { payload }: PayloadAction<boolean>) => {
+      state.master.blinderActive = payload === true
+    },
+    toggleMasterBlinder: (state) => {
+      state.master.blinderActive = !state.master.blinderActive
     },
     setGroupExclusive: (
       state,
@@ -188,6 +215,12 @@ export const {
   releaseGroupStrobe,
   releaseAllGroupStrobes,
   releaseAllLiveOverrides,
+  setGroupFollowMaster,
+  setMasterBrightness,
+  setMasterStrobe,
+  toggleMasterStrobe,
+  setMasterBlinder,
+  toggleMasterBlinder,
   setGroupExclusive,
   toggleGroupExclusive,
   setGroupBlinder,

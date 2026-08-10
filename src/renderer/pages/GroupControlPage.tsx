@@ -13,6 +13,10 @@ import {
   setGroupBrightness,
   setGroupStrobe,
   setBlinderFadeBeats,
+  setGroupFollowMaster,
+  setMasterBrightness,
+  toggleMasterBlinder,
+  toggleMasterStrobe,
   toggleGroupBlinder,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
@@ -77,6 +81,7 @@ export default function GroupControlPage({
     <Root>
       {!hideStatusBar ? <StatusBar /> : null}
       <Header groupCount={groups.length} />
+      <MasterBar />
       {groups.length === 0 ? (
         <EmptyState>
           No fixture groups yet. Assign groups to your fixtures on the Universe page
@@ -178,6 +183,77 @@ function Header({ groupCount }: { groupCount: number }) {
   )
 }
 
+function MasterBar() {
+  const dispatch = useDispatch()
+  const master = useTypedSelector((state) => state.groupControl.master)
+  const exemptGroups = useTypedSelector((state) =>
+    Object.entries(state.groupControl.byGroup)
+      .filter(([, control]) => control?.followMaster === false)
+      .map(([group]) => group)
+      .sort()
+  )
+
+  return (
+    <MasterRoot>
+      <MasterTitle>MASTER</MasterTitle>
+
+      <MasterFaderCluster>
+        <MasterLabel>Dimmer</MasterLabel>
+        <SliderMidiOverlay
+          action={{ type: 'setGroupMasterDimmer' }}
+          style={{ width: '9rem', height: '1.4rem' }}
+        >
+          <BriefTooltip title="Layered on top of each group's own dimmer — 50% here under a group at 50% gives 25%">
+            <MasterTrack>
+              <SliderBase
+                radius={0.42}
+                orientation="horizontal"
+                onChange={(value) => dispatch(setMasterBrightness(value))}
+                ariaLabel="Master dimmer"
+              >
+                <MasterCap $value={master.brightness} aria-hidden />
+              </SliderBase>
+            </MasterTrack>
+          </BriefTooltip>
+        </SliderMidiOverlay>
+        <MasterReadout $dim={master.brightness < 1}>
+          {Math.round(master.brightness * 100)}%
+        </MasterReadout>
+      </MasterFaderCluster>
+
+      <ButtonMidiOverlay action={{ type: 'setGroupMasterBlinder' }}>
+        <BriefTooltip title="Hold to blind every following group. Assign to a MIDI pad.">
+          <BlinderButton
+            $active={master.blinderActive}
+            size="small"
+            onClick={() => dispatch(toggleMasterBlinder())}
+          >
+            Blind
+          </BlinderButton>
+        </BriefTooltip>
+      </ButtonMidiOverlay>
+
+      <ButtonMidiOverlay action={{ type: 'setGroupMasterStrobe' }}>
+        <BriefTooltip title="Hold to fire the Flash on every following group, each at its own level. Assign to a MIDI pad.">
+          <FlashButton
+            $active={master.strobeActive}
+            size="small"
+            onClick={() => dispatch(toggleMasterStrobe())}
+          >
+            Strobe
+          </FlashButton>
+        </BriefTooltip>
+      </ButtonMidiOverlay>
+
+      {exemptGroups.length > 0 ? (
+        <MasterExempt title={`Ignoring the master: ${exemptGroups.join(', ')}`}>
+          not following: {exemptGroups.join(', ')}
+        </MasterExempt>
+      ) : null}
+    </MasterRoot>
+  )
+}
+
 function GroupCard({
   group,
   fixtureCount,
@@ -206,6 +282,24 @@ function GroupCard({
           {fixtureCount} fixture{fixtureCount === 1 ? '' : 's'}
         </FixtureCount>
       </CardHeader>
+
+      <BriefTooltip title="Whether the master dimmer, strobe and blinder reach this group">
+        <FollowMasterRow>
+          <FollowMasterBox
+            type="checkbox"
+            checked={control.followMaster !== false}
+            onChange={(event) =>
+              dispatch(
+                setGroupFollowMaster({ group, follow: event.target.checked })
+              )
+            }
+            aria-label={`${group} follows the master`}
+          />
+          <FollowMasterLabel $on={control.followMaster !== false}>
+            follow master
+          </FollowMasterLabel>
+        </FollowMasterRow>
+      </BriefTooltip>
 
       <FaderRow>
         <Fader
@@ -361,6 +455,92 @@ const HeaderTitle = styled.div`
 const HeaderSubtitle = styled.div`
   font-size: 0.8rem;
   color: ${(props) => props.theme.colors.text.secondary};
+`
+
+const MasterRoot = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 0 1rem 0.9rem 1rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #ffffff26;
+  border-radius: 0.3rem;
+  background: #ffffff0a;
+`
+
+const MasterTitle = styled.div`
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09rem;
+  color: ${(props) => props.theme.colors.text.secondary};
+`
+
+const MasterFaderCluster = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+`
+
+const MasterLabel = styled.div`
+  font-size: 0.78rem;
+  color: ${(props) => props.theme.colors.text.secondary};
+`
+
+const MasterTrack = styled.div`
+  position: relative;
+  width: 9rem;
+  height: 1.4rem;
+`
+
+const MasterCap = styled.div<{ $value: number }>`
+  position: absolute;
+  top: 50%;
+  left: ${(p) => p.$value * 100}%;
+  width: 0.5rem;
+  height: 1.15rem;
+  transform: translate(-50%, -50%);
+  border-radius: 0.12rem;
+  background: ${(p) => (p.$value < 1 ? '#ffd479' : '#e8e8e8')};
+  box-shadow: 0 1px 3px #0007;
+`
+
+const MasterReadout = styled.div<{ $dim: boolean }>`
+  font-size: 0.75rem;
+  min-width: 2.6rem;
+  text-align: right;
+  color: ${(p) => (p.$dim ? '#ffd479' : p.theme.colors.text.secondary)};
+`
+
+const MasterExempt = styled.div`
+  font-size: 0.7rem;
+  color: ${(props) => props.theme.colors.text.secondary};
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+const FollowMasterRow = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  margin-bottom: 0.15rem;
+`
+
+const FollowMasterBox = styled.input`
+  margin: 0;
+  width: 0.8rem;
+  height: 0.8rem;
+  accent-color: #ffd479;
+  cursor: pointer;
+`
+
+const FollowMasterLabel = styled.span<{ $on: boolean }>`
+  font-size: 0.62rem;
+  letter-spacing: 0.02rem;
+  color: ${(p) => (p.$on ? p.theme.colors.text.secondary : '#ff8a4c')};
 `
 
 const SoloWarning = styled.div`

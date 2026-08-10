@@ -117,6 +117,26 @@ interface SetGroupBlinder {
   group: string
 }
 
+/** Groups-page master dimmer, layered over every following group. */
+interface SetGroupMasterDimmer {
+  type: 'setGroupMasterDimmer'
+}
+
+/** Master strobe across every following group. Momentary. */
+interface SetGroupMasterStrobe {
+  type: 'setGroupMasterStrobe'
+}
+
+/** Master blinder across every following group. Momentary. */
+interface SetGroupMasterBlinder {
+  type: 'setGroupMasterBlinder'
+}
+
+/** Drop every live group override at once. One-shot. */
+interface ReleaseAllGroupOverrides {
+  type: 'releaseAllGroupOverrides'
+}
+
 interface TapTempo {
   type: 'tapTempo'
 }
@@ -186,6 +206,9 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
   'setGroupStrobeFlash',
   'setGroupBlinder',
+  'setGroupMasterStrobe',
+  'setGroupMasterBlinder',
+  'releaseAllGroupOverrides',
   'releaseGroupStrobe',
 ])
 
@@ -200,6 +223,8 @@ export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
   'setGroupStrobeFlash',
   'setGroupBlinder',
+  'setGroupMasterStrobe',
+  'setGroupMasterBlinder',
 ])
 
 export type MidiAction =
@@ -211,6 +236,10 @@ export type MidiAction =
   | SetGroupExclusive
   | SetGroupStrobeFlash
   | SetGroupBlinder
+  | SetGroupMasterDimmer
+  | SetGroupMasterStrobe
+  | SetGroupMasterBlinder
+  | ReleaseAllGroupOverrides
   | ReleaseGroupStrobe
   | SetBpm
   | TapTempo
