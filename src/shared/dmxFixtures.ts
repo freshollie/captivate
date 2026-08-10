@@ -4107,6 +4107,12 @@ export type FlattenedFixture = {
    * is finer, so the dimmer must not double up on them.
    */
   dimmerAppliesWindow?: boolean
+  /**
+   * Which subfixture this partition came from, or undefined for the parent's own
+   * channels. Subfixtures are separate lights — they gate and randomize
+   * independently — so anything identifying a fixture has to keep them apart.
+   */
+  subFixtureIndex?: number
   channels: [number, FixtureChannel][]
   window: Window2D_t
   groups: string[]

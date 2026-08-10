@@ -69,16 +69,27 @@ export function countDmxRandomizerSlots(
   return getDmxRandomizerFixtures(fixtures, sceneGroups, intensityCeiling).length
 }
 
+/**
+ * Identity of the *light* that owns a randomizer slot.
+ *
+ * Channel-family partitions of one light share a slot, so a fixture's emitters dim
+ * together instead of drifting apart. Subfixtures do not: a two-head bar is two
+ * lights, and the parent's own channels are a third, so each has to randomize on its
+ * own. Keyed on the subfixture index rather than the fixture id alone — collapsing
+ * them makes a multi-head fixture randomize as a single lamp.
+ */
 function flattenedFixtureIdentityKey(fixture: FlattenedFixture): string {
+  const part =
+    fixture.subFixtureIndex === undefined ? 'main' : `sub${fixture.subFixtureIndex}`
   const fixtureId =
     typeof fixture.fixtureId === 'string' ? fixture.fixtureId.trim() : ''
   if (fixtureId.length > 0) {
-    return `id:${fixtureId}`
+    return `id:${fixtureId}:${part}`
   }
   const firstCh = fixture.channels[0]?.[0]
   const typeId =
     typeof fixture.fixtureTypeId === 'string' ? fixture.fixtureTypeId : ''
-  return `ch:${Number.isFinite(firstCh) ? firstCh : -1}:type:${typeId}`
+  return `ch:${Number.isFinite(firstCh) ? firstCh : -1}:type:${typeId}:${part}`
 }
 
 /** Slot index in the split randomizer array for a DMX fixture, or -1 if filtered out. */

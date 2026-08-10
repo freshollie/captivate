@@ -1475,6 +1475,7 @@ export function flatten_fixture(
 
     return {
       intensity: sub.intensity ?? fixture_type.intensity,
+      subFixtureIndex: subIndex,
       window: effectiveRelative
         ? window2DToParentCoords(effectiveRelative, fixture.window)
         : fixture.window,
@@ -1518,11 +1519,25 @@ export function flatten_fixture(
     .filter((fixtureItem) => fixtureItem.channels.length > 0)
 
   // The randomizer is an intensity effect, so it rides whatever channel actually
-  // controls intensity: the master/dimmer when the fixture has one, colour channels
-  // otherwise. Flagging every partition of the fixture keeps it applied exactly once —
+  // controls intensity: the master/dimmer when the light has one, colour channels
+  // otherwise. Flagging every partition of that light keeps it applied exactly once —
   // the dimmer partition applies it and the emitter partitions skip it.
-  if (flattened.some(partitionHasMasterChannel)) {
-    for (const partition of flattened) {
+  //
+  // Scoped per subfixture, because subfixtures are separate lights. A two-head bar
+  // with one shared dimmer has to randomize on each head's own emitters; routing it
+  // through the shared dimmer would only ever dim both heads together.
+  const subFixtureKey = (partition: FlattenedFixture) =>
+    partition.subFixtureIndex === undefined
+      ? 'main'
+      : `sub${partition.subFixtureIndex}`
+  const dimmerCarriesRandomizer = new Set<string>()
+  for (const partition of flattened) {
+    if (partitionHasMasterChannel(partition)) {
+      dimmerCarriesRandomizer.add(subFixtureKey(partition))
+    }
+  }
+  for (const partition of flattened) {
+    if (dimmerCarriesRandomizer.has(subFixtureKey(partition))) {
       partition.dimmerAppliesRandomizer = true
     }
   }
