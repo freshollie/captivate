@@ -24,8 +24,10 @@ import {
 } from '../renderer/laser/laserProjectState'
 import { MixerState } from 'renderer/redux/mixerSlice'
 import {
+  clampBlinderFadeBeats,
   clampGroupStrobeValue,
   initGroupControlState,
+  DEFAULT_BLINDER_FADE_BEATS,
   DEFAULT_STROBE_FLASH_LEVEL,
   type GroupControlState,
 } from './groupControl'
@@ -1321,14 +1323,29 @@ export function fixGroupControlState(
       ? clampGroupStrobeValue(control.strobeFlashLevel)
       : DEFAULT_STROBE_FLASH_LEVEL
 
+    // Live overrides are never restored. Solo, blinder and flash are momentary
+    // gestures; a note-off that never arrived would otherwise be written into the
+    // project and reopen the show with the rig blacked out or blinding. Only the
+    // operator's settings — the brightness trim and the flash level — persist.
     next.byGroup[name] = {
       brightness,
-      strobeEnabled: control.strobeEnabled === true,
-      strobe: clampGroupStrobeValue(control.strobe),
+      strobeEnabled: false,
+      strobe: 0,
       strobeFlashLevel: flashLevel > 0 ? flashLevel : DEFAULT_STROBE_FLASH_LEVEL,
-      exclusiveEnabled: control.exclusiveEnabled === true,
+      strobeFlashActive: false,
+      exclusiveEnabled: false,
+      blinderActive: false,
     }
   }
+
+  // `blinderPeriodBeats` was the pulse-period spelling of this setting before it
+  // became a fade time; read it as a fallback so a project saved mid-change loads.
+  const legacyFade = (existing as { blinderPeriodBeats?: unknown } | null | undefined)
+    ?.blinderPeriodBeats
+  next.blinderFadeBeats = clampBlinderFadeBeats(
+    existing?.blinderFadeBeats ??
+      (typeof legacyFade === 'number' ? legacyFade : DEFAULT_BLINDER_FADE_BEATS)
+  )
 
   state.groupControl = next
 }

@@ -29,7 +29,11 @@ import { indexArray, zip } from '../../shared/util'
 import { TimeState } from '../../shared/TimeState'
 import { SplitState } from 'renderer/redux/realtimeStore'
 import { getUniverseOverwrites } from '../../renderer/redux/mixerSlice'
-import { applyGroupControlsToUniverse } from '../../shared/groupControl'
+import {
+  advanceBlinderLevels,
+  applyGroupControlsToUniverse,
+  initBlinderRuntime,
+} from '../../shared/groupControl'
 import { telemetryEvent } from '../telemetry'
 import { getMoverPhaseOrderEntries } from '../../renderer/redux/dmxSlice'
 import { clampNormalized } from '../../math/util'
@@ -990,6 +994,9 @@ function getMapCalibrationOverrideForChannel(
   )
 }
 
+/** Blinder fade-out state, carried between frames. */
+const _blinderRuntime = initBlinderRuntime()
+
 let _lastGroupControlWarnAtMs = 0
 
 /** Rate-limited: this would otherwise log on every frame of every universe. */
@@ -1013,7 +1020,8 @@ function calculateDmxForUniverse(
   splitStates: SplitState[],
   timeState: TimeState,
   universeIndex: number,
-  moverPhaseAimBySplit: Array<MoverPhaseAim | null>
+  moverPhaseAimBySplit: Array<MoverPhaseAim | null>,
+  blinderLevels: { [group: string]: number } = {}
 ): number[] {
   const universeFixtures = state.dmx.universe.filter(
     (fixture) => (fixture.universe ?? 1) === universeIndex
@@ -1315,7 +1323,12 @@ function calculateDmxForUniverse(
   // Guarded: this runs on every frame of every universe, so a fault in one optional
   // feature must never be able to take the whole rig dark mid-show.
   try {
-    applyGroupControlsToUniverse(channels, all_fixtures, state.groupControl)
+    applyGroupControlsToUniverse(
+      channels,
+      all_fixtures,
+      state.groupControl,
+      blinderLevels
+    )
   } catch (error) {
     reportGroupControlFailure(error)
   }
@@ -1400,6 +1413,15 @@ export function calculateDmx(
     timeState,
     audioMetrics
   )
+  // Advanced once per frame, not once per universe: a blinder's fade-out is timed
+  // from the moment of release, and stepping it per universe would run it fast on
+  // multi-universe rigs.
+  const blinderLevels = advanceBlinderLevels(
+    _blinderRuntime,
+    state.groupControl,
+    performance.now(),
+    timeState.bpm
+  )
 
   for (let universeIndex = 1; universeIndex <= universeCount; universeIndex++) {
     outputByUniverse.push(
@@ -1408,7 +1430,8 @@ export function calculateDmx(
         splitStates,
         timeState,
         universeIndex,
-        moverPhaseAimBySplit
+        moverPhaseAimBySplit,
+        blinderLevels
       )
     )
   }

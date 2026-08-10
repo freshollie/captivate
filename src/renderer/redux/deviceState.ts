@@ -111,6 +111,12 @@ interface SetGroupStrobeFlash {
   group: string
 }
 
+/** Blind a group to pulsing white. Momentary: held while the pad is down. */
+interface SetGroupBlinder {
+  type: 'setGroupBlinder'
+  group: string
+}
+
 interface TapTempo {
   type: 'tapTempo'
 }
@@ -179,6 +185,7 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'laserTool',
   'setGroupExclusive',
   'setGroupStrobeFlash',
+  'setGroupBlinder',
   'releaseGroupStrobe',
 ])
 
@@ -192,6 +199,7 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
 export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
   'setGroupStrobeFlash',
+  'setGroupBlinder',
 ])
 
 export type MidiAction =
@@ -202,6 +210,7 @@ export type MidiAction =
   | SetGroupControl
   | SetGroupExclusive
   | SetGroupStrobeFlash
+  | SetGroupBlinder
   | ReleaseGroupStrobe
   | SetBpm
   | TapTempo
@@ -334,6 +343,7 @@ export function getActionID(action: MidiAction) {
   if (
     action.type === 'setGroupExclusive' ||
     action.type === 'setGroupStrobeFlash' ||
+    action.type === 'setGroupBlinder' ||
     action.type === 'releaseGroupStrobe'
   ) {
     return `${action.type}:${action.group}`

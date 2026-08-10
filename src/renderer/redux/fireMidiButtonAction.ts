@@ -16,7 +16,9 @@ import {
 import {
   releaseGroupStrobe,
   setGroupExclusive,
+  setGroupBlinder,
   setGroupStrobeFlash,
+  toggleGroupBlinder,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
 } from './groupControlSlice'
@@ -83,6 +85,12 @@ export function fireMidiButtonAction(
       pressed === undefined
         ? toggleGroupStrobeFlash(action.group)
         : setGroupStrobeFlash({ group: action.group, pressed })
+    )
+  } else if (action.type === 'setGroupBlinder') {
+    dispatch(
+      pressed === undefined
+        ? toggleGroupBlinder(action.group)
+        : setGroupBlinder({ group: action.group, pressed })
     )
   } else if (action.type === 'setGroupExclusive') {
     dispatch(

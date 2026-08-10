@@ -1,6 +1,7 @@
 import type { FixtureChannel, FlattenedFixture } from './dmxFixtures'
 import { DMX_MAX_VALUE, DMX_MIN_VALUE } from './dmxFixtures'
-import { getFixturesInGroups } from './dmxUtil'
+import { getFixturesInGroups, listColorMapSlots } from './dmxUtil'
+import { inferColorKind } from './dmxColors'
 
 /**
  * Per-group live controls, applied to the finished scene output on the way to the
@@ -32,10 +33,22 @@ export interface GroupControl {
    */
   strobeFlashLevel: number
   /**
+   * True only while the Flash button holds the strobe, as opposed to the fader
+   * having armed it. Both light the same channels; only the flash forces brightness
+   * to full, so they have to be told apart.
+   */
+  strobeFlashActive: boolean
+  /**
    * Solo. While any group is exclusive, fixtures outside every exclusive group are
    * held dark. Momentary by design — this is a "hit it for the drop" control.
    */
   exclusiveEnabled: boolean
+  /**
+   * Blinder. While held, the group is driven to pulsing white regardless of the
+   * scene — including fixtures the scene never addresses. Momentary; nothing about
+   * the programming changes, so letting go restores it exactly.
+   */
+  blinderActive: boolean
 }
 
 /** Fresh groups flash at full rather than at nothing. */
@@ -43,6 +56,115 @@ export const DEFAULT_STROBE_FLASH_LEVEL = 255
 
 export interface GroupControlState {
   byGroup: { [group: string]: GroupControl | undefined }
+  /** How long a blinder takes to fade out after release, in beats. Global. */
+  blinderFadeBeats: number
+}
+
+/** Matches the saturation threshold the scene renderer uses to pick a white slot. */
+const COLOR_WHEEL_WHITE_MAX_SATURATION = 0.02
+
+export const DEFAULT_BLINDER_FADE_BEATS = 1
+export const MIN_BLINDER_FADE_BEATS = 0
+export const MAX_BLINDER_FADE_BEATS = 16
+
+export function clampBlinderFadeBeats(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_BLINDER_FADE_BEATS
+  return Math.min(MAX_BLINDER_FADE_BEATS, Math.max(MIN_BLINDER_FADE_BEATS, value))
+}
+
+/**
+ * Fade state for blinders that have been let go.
+ *
+ * The fade outlives the button press, so it cannot be derived from the current beat
+ * alone — the moment of release has to be remembered. Held by the caller rather than
+ * in module scope so it stays testable and so the per-universe DMX loop cannot
+ * advance it more than once per frame.
+ *
+ * Timed on the wall clock, not the beat clock. The beat clock freezes when the
+ * transport stops, which would strand a released blinder at whatever level it had
+ * reached — on forever, overriding the group's own faders. The configured length is
+ * still musical: it is converted to milliseconds at the tempo in force when the
+ * button is released.
+ */
+export interface BlinderRuntime {
+  /** Wall-clock ms at which each releasing group started fading. */
+  fadeStartMs: { [group: string]: number }
+  /** How long each in-progress fade runs for, in ms. */
+  fadeDurationMs: { [group: string]: number }
+  /** Groups whose button was down on the previous frame. */
+  heldLastFrame: { [group: string]: boolean }
+}
+
+export function initBlinderRuntime(): BlinderRuntime {
+  return { fadeStartMs: {}, fadeDurationMs: {}, heldLastFrame: {} }
+}
+
+const FALLBACK_BPM = 120
+
+function beatsToMs(beats: number, bpm: number): number {
+  const tempo = Number.isFinite(bpm) && bpm > 0 ? bpm : FALLBACK_BPM
+  return (beats * 60000) / tempo
+}
+
+/** Blinder level per group this frame: 1 while held, ramping to 0 after release. */
+export function advanceBlinderLevels(
+  runtime: BlinderRuntime,
+  groupControl: GroupControlState | null | undefined,
+  /** Monotonic wall clock in ms. */
+  nowMs: number,
+  /** Tempo used to turn the configured beat count into a duration. */
+  bpm: number
+): { [group: string]: number } {
+  const byGroup = safeByGroup(groupControl)
+  const fadeBeats = clampBlinderFadeBeats(
+    groupControl?.blinderFadeBeats ?? DEFAULT_BLINDER_FADE_BEATS
+  )
+  const levels: { [group: string]: number } = {}
+
+  const groups = new Set([
+    ...Object.keys(byGroup),
+    ...Object.keys(runtime.fadeStartMs),
+    ...Object.keys(runtime.heldLastFrame),
+  ])
+
+  for (const group of groups) {
+    const held = byGroup[group]?.blinderActive === true
+
+    if (held) {
+      runtime.heldLastFrame[group] = true
+      delete runtime.fadeStartMs[group]
+      delete runtime.fadeDurationMs[group]
+      levels[group] = 1
+      continue
+    }
+
+    if (runtime.heldLastFrame[group] === true) {
+      delete runtime.heldLastFrame[group]
+      const durationMs = beatsToMs(fadeBeats, bpm)
+      if (fadeBeats <= 0 || !Number.isFinite(durationMs) || durationMs <= 0) {
+        continue
+      }
+      runtime.fadeStartMs[group] = nowMs
+      runtime.fadeDurationMs[group] = durationMs
+    }
+
+    const startedAt = runtime.fadeStartMs[group]
+    const durationMs = runtime.fadeDurationMs[group]
+    if (startedAt === undefined || durationMs === undefined) continue
+
+    const elapsed = nowMs - startedAt
+    // Negative elapsed means the clock moved under us; drop the fade rather than
+    // leaving a blinder stuck on.
+    if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed >= durationMs) {
+      delete runtime.fadeStartMs[group]
+      delete runtime.fadeDurationMs[group]
+      continue
+    }
+
+    levels[group] = 1 - elapsed / durationMs
+  }
+
+  return levels
 }
 
 export function initGroupControl(): GroupControl {
@@ -51,8 +173,34 @@ export function initGroupControl(): GroupControl {
     strobeEnabled: false,
     strobe: 0,
     strobeFlashLevel: DEFAULT_STROBE_FLASH_LEVEL,
+    strobeFlashActive: false,
     exclusiveEnabled: false,
+    blinderActive: false,
   }
+}
+
+/**
+ * Whether a momentary control is holding this group at full brightness.
+ *
+ * Flash and Exclusive are both "hit it for the drop" gestures — pulling the group up
+ * to whatever the scene is giving rather than leaving it trimmed down by its own
+ * fader. The fader keeps its position throughout and takes over again on release.
+ */
+export function isGroupBrightnessForcedFull(
+  control: GroupControl | null | undefined
+): boolean {
+  if (control === null || control === undefined) return false
+  return control.strobeFlashActive === true || control.exclusiveEnabled === true
+}
+
+/** Brightness multiplier actually applied, momentary overrides included. */
+export function effectiveGroupBrightness(
+  control: GroupControl | null | undefined
+): number {
+  if (isGroupBrightnessForcedFull(control)) return 1
+  const brightness = control?.brightness
+  if (!Number.isFinite(brightness)) return 1
+  return Math.min(1, Math.max(0, brightness as number))
 }
 
 /** Brightness at full is the released state — nothing to undo. */
@@ -64,7 +212,7 @@ export function isGroupBrightnessActive(
 }
 
 export function initGroupControlState(): GroupControlState {
-  return { byGroup: {} }
+  return { byGroup: {}, blinderFadeBeats: DEFAULT_BLINDER_FADE_BEATS }
 }
 
 export function isGroupControlActive(
@@ -74,8 +222,19 @@ export function isGroupControlActive(
   return (
     isGroupBrightnessActive(control) ||
     control.strobeEnabled === true ||
-    control.exclusiveEnabled === true
+    control.exclusiveEnabled === true ||
+    control.blinderActive === true
   )
+}
+
+/** Group names currently blinding, in stable order. */
+export function blindingGroupNames(
+  state: GroupControlState | null | undefined
+): string[] {
+  const byGroup = safeByGroup(state)
+  return Object.keys(byGroup)
+    .filter((group) => byGroup[group]?.blinderActive === true)
+    .sort()
 }
 
 /** Group names currently soloing, in stable order. */
@@ -152,8 +311,12 @@ function resolveOverrides(
 
     for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
       const current = resolved.get(fixture) ?? {}
-      if (isGroupBrightnessActive(control)) {
-        const brightness = clamp01(control.brightness)
+      // A group forcing full still has to contribute, not just skip: a fixture it
+      // shares with a dimmed group has to come up to full, and HTP only sees values
+      // that were actually offered.
+      const forcesFull = isGroupBrightnessForcedFull(control)
+      if (forcesFull || isGroupBrightnessActive(control)) {
+        const brightness = forcesFull ? 1 : clamp01(control.brightness)
         current.brightness =
           current.brightness === undefined
             ? brightness
@@ -352,6 +515,105 @@ function applyExclusiveBlackout(
 }
 
 /**
+ * Should this channel carry the blinder's white?
+ *
+ * Anything that makes white light: the colour emitters, plus white / warm-white
+ * channels, which some profiles model as a colour channel and others as a custom
+ * channel named "White". Amber and UV are left alone — driving them would tint the
+ * result rather than brighten it.
+ */
+/**
+ * DMX for the white / open slot of a colour wheel, or null if it has none.
+ *
+ * Wheel fixtures have no colour emitters to drive, so white has to come from the
+ * wheel itself. Same white test the scene renderer uses when it resolves a colour to
+ * a slot, and the same mid-slot DMX, so the blinder lands where the engine would.
+ */
+function colorWheelWhiteDmx(channel: FixtureChannel): number | null {
+  if (channel.type !== 'colorMap') return null
+  const slots = listColorMapSlots(channel)
+  for (const slot of slots) {
+    if (inferColorKind(slot) === 'white' || slot.saturation <= COLOR_WHEEL_WHITE_MAX_SATURATION) {
+      return slot.outputDmx
+    }
+  }
+  return null
+}
+
+function blinderWhiteContribution(channel: FixtureChannel): 'full' | null {
+  if (channel.type === 'color') {
+    const kind = inferColorKind(channel.color)
+    if (kind === 'amber' || kind === 'uv') return null
+    return 'full'
+  }
+  if (channel.type === 'custom') {
+    const name = channel.name.trim().toLowerCase()
+    if (name.includes('amber')) return null
+    if (name.includes('uv') || name.includes('ultraviolet')) return null
+    if (name.includes('white')) return 'full'
+  }
+  return null
+}
+
+/**
+ * Drive a group to white, overriding whatever the scene put on the wire.
+ *
+ * Deliberately the last thing written: a blinder is a full takeover of the fixture,
+ * so it beats the group's own faders and even a solo blackout. Nothing is stored —
+ * once the level reaches zero the scene simply shows through again.
+ */
+function applyBlinder(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  blinderLevels: { [group: string]: number }
+): void {
+  const groups = Object.keys(blinderLevels)
+  if (groups.length === 0) return
+
+  // A fixture in two blinding groups takes the brighter of the two.
+  const levelByFixture = new Map<FlattenedFixture, number>()
+  for (const group of groups) {
+    const level = clamp01(blinderLevels[group] ?? 0)
+    if (level <= 0) continue
+    for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
+      const existing = levelByFixture.get(fixture)
+      if (existing === undefined || level > existing) {
+        levelByFixture.set(fixture, level)
+      }
+    }
+  }
+
+  for (const [fixture, level] of levelByFixture) {
+    {
+      for (const [channelIdx, channel] of fixture.channels) {
+        if (channel.type === 'master') {
+          writeChannel(
+            channels,
+            channelIdx,
+            channel.isOnOff
+              ? level > 0.5
+                ? channel.max
+                : channel.min
+              : channel.min + (channel.max - channel.min) * level
+          )
+          continue
+        }
+        if (blinderWhiteContribution(channel) === 'full') {
+          writeChannel(channels, channelIdx, DMX_MAX_VALUE * level)
+          continue
+        }
+        const wheelWhite = colorWheelWhiteDmx(channel)
+        if (wheelWhite !== null) {
+          // A wheel slot is a position, not a level — it goes to white and stays
+          // there for the whole fade. The dimmer above is what actually fades.
+          writeChannel(channels, channelIdx, wheelWhite)
+        }
+      }
+    }
+  }
+}
+
+/**
  * Apply the armed group controls to a finished universe buffer.
  *
  * Runs after the scene has been rendered and before the DMX mixer's per-channel
@@ -360,9 +622,14 @@ function applyExclusiveBlackout(
 export function applyGroupControlsToUniverse(
   channels: number[],
   universeFixtures: FlattenedFixture[],
-  groupControl: GroupControlState | null | undefined
+  groupControl: GroupControlState | null | undefined,
+  /** Per-group blinder level from `advanceBlinderLevels`. */
+  blinderLevels: { [group: string]: number } = {}
 ): void {
-  if (activeGroupControlNames(groupControl).length === 0) return
+  const hasBlinder = Object.keys(blinderLevels).length > 0
+  // A blinder mid-fade keeps rendering after its button is up, so the early-out
+  // cannot rely on the armed-control list alone.
+  if (!hasBlinder && activeGroupControlNames(groupControl).length === 0) return
 
   const resolved = resolveOverrides(universeFixtures, groupControl)
 
@@ -377,8 +644,10 @@ export function applyGroupControlsToUniverse(
     }
   }
 
-  // Last, so solo wins over any level the faders above just set.
+  // Solo wins over any level the faders above just set...
   applyExclusiveBlackout(channels, universeFixtures, groupControl)
+  // ...and the blinder wins over everything, including a solo blackout.
+  applyBlinder(channels, universeFixtures, blinderLevels)
 }
 
 /** Fixture count a group control will actually reach, for the UI. */

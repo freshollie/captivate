@@ -8,17 +8,21 @@ import { BriefTooltip } from '../base/appTooltip'
 import StatusBar from '../menu/StatusBar'
 import { useDmxSelector, useTypedSelector } from '../redux/store'
 import {
-  releaseAllGroupStrobes,
+  releaseAllLiveOverrides,
   releaseGroupStrobe,
   setGroupBrightness,
   setGroupStrobe,
+  setBlinderFadeBeats,
+  toggleGroupBlinder,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
 } from '../redux/groupControlSlice'
 import {
   countFixturesInGroup,
+  effectiveGroupBrightness,
   initGroupControl,
   isGroupBrightnessActive,
+  isGroupBrightnessForcedFull,
   isGroupControlActive,
   type GroupControl,
 } from '../../shared/groupControl'
@@ -28,6 +32,7 @@ import { DMX_MAX_VALUE, universeHasMovers } from '../../shared/dmxFixtures'
 const FADER_RADIUS_REM = 0.5
 /** Virtual group matched by pan/tilt channels rather than group assignment. */
 const MOVERS_GROUP = 'Movers'
+const BLINDER_FADE_OPTIONS = [0, 0.25, 0.5, 1, 2, 4, 8]
 
 export default function GroupControlPage({
   hideStatusBar = false,
@@ -100,11 +105,23 @@ function Header({ groupCount }: { groupCount: number }) {
         isGroupControlActive(control)
       ).length
   )
-  const strobeCount = useTypedSelector(
+  const blinderFadeBeats = useTypedSelector(
+    (state) => state.groupControl.blinderFadeBeats
+  )
+  const liveCount = useTypedSelector(
     (state) =>
       Object.values(state.groupControl.byGroup).filter(
-        (control) => control?.strobeEnabled === true
+        (control) =>
+          control?.strobeEnabled === true ||
+          control?.exclusiveEnabled === true ||
+          control?.blinderActive === true
       ).length
+  )
+  const soloGroups = useTypedSelector((state) =>
+    Object.entries(state.groupControl.byGroup)
+      .filter(([, control]) => control?.exclusiveEnabled === true)
+      .map(([group]) => group)
+      .sort()
   )
 
   return (
@@ -117,15 +134,43 @@ function Header({ groupCount }: { groupCount: number }) {
           {activeCount > 0 ? `, ${activeCount} active` : ''}
         </HeaderSubtitle>
       </HeaderTitleRow>
-      <BriefTooltip title="Hand every group's strobe back to the scene">
+      <BlinderSpeedCluster>
+        <BlinderSpeedLabel>Blinder fade</BlinderSpeedLabel>
+        <BriefTooltip title="How long a blinder takes to fade out after you let go. Shared by every group.">
+          <BlinderSpeedSelect
+            value={blinderFadeBeats}
+            onChange={(event) =>
+              dispatch(setBlinderFadeBeats(Number(event.target.value)))
+            }
+            aria-label="Blinder fade-out length in beats"
+          >
+            {BLINDER_FADE_OPTIONS.map((beats) => (
+              <option key={beats} value={beats}>
+                {beats === 0
+                  ? 'instant'
+                  : `${beats < 1 ? `1/${Math.round(1 / beats)}` : beats} beat${
+                      beats === 1 ? '' : 's'
+                    }`}
+              </option>
+            ))}
+          </BlinderSpeedSelect>
+        </BriefTooltip>
+      </BlinderSpeedCluster>
+      {soloGroups.length > 0 ? (
+        <SoloWarning title={`Soloing: ${soloGroups.join(', ')} — everything else is held dark`}>
+          SOLO: {soloGroups.join(', ')}
+        </SoloWarning>
+      ) : null}
+      <BriefTooltip title="Drop every live override on every group — strobes, solos and blinders. Brightness trims are left alone.">
         <span>
           <Button
-            disabled={strobeCount === 0}
+            disabled={liveCount === 0}
             variant="contained"
             size="small"
-            onClick={() => dispatch(releaseAllGroupStrobes())}
+            color={soloGroups.length > 0 ? 'warning' : 'primary'}
+            onClick={() => dispatch(releaseAllLiveOverrides())}
           >
-            Release strobes
+            Release all
           </Button>
         </span>
       </BriefTooltip>
@@ -146,6 +191,9 @@ function GroupCard({
   )
 
   const isActive = isGroupControlActive(control)
+  // Flash / Excl pull the group up to full while held; show that rather than the
+  // fader's resting position, or the readout would contradict the lights.
+  const brightnessForcedFull = isGroupBrightnessForcedFull(control)
 
   return (
     <Card $active={isActive}>
@@ -162,11 +210,13 @@ function GroupCard({
       <FaderRow>
         <Fader
           label="Bright"
-          readout={`${Math.round(control.brightness * 100)}%`}
-          value={control.brightness}
-          enabled={isGroupBrightnessActive(control)}
+          readout={`${Math.round(effectiveGroupBrightness(control) * 100)}%${
+            brightnessForcedFull ? '*' : ''
+          }`}
+          value={effectiveGroupBrightness(control)}
+          enabled={brightnessForcedFull || isGroupBrightnessActive(control)}
           midiAction={{ type: 'setGroupControl', group, control: 'brightness' }}
-          tooltip="Scales the master/dimmer channel against the scene — 100% leaves it untouched, a scene at 0 stays dark, and fixtures without a dimmer are unaffected"
+          tooltip="Scales the master/dimmer channel against the scene — 100% leaves it untouched, a scene at 0 stays dark, and fixtures without a dimmer are unaffected. Flash and Excl hold it at 100% while engaged (*)."
           onChange={(value) => dispatch(setGroupBrightness({ group, value }))}
         />
         <Fader
@@ -192,6 +242,17 @@ function GroupCard({
             >
               Excl
             </ExclusiveButton>
+          </BriefTooltip>
+        </ButtonMidiOverlay>
+        <ButtonMidiOverlay action={{ type: 'setGroupBlinder', group }}>
+          <BriefTooltip title="Hold to blind: full pulsing white over the scene, whether or not the scene uses this group. Assign to a MIDI pad to hold it momentarily.">
+            <BlinderButton
+              $active={control.blinderActive}
+              size="small"
+              onClick={() => dispatch(toggleGroupBlinder(group))}
+            >
+              Blind
+            </BlinderButton>
           </BriefTooltip>
         </ButtonMidiOverlay>
         <ButtonMidiOverlay action={{ type: 'setGroupStrobeFlash', group }}>
@@ -300,6 +361,44 @@ const HeaderTitle = styled.div`
 const HeaderSubtitle = styled.div`
   font-size: 0.8rem;
   color: ${(props) => props.theme.colors.text.secondary};
+`
+
+const SoloWarning = styled.div`
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04rem;
+  color: #1a1a1a;
+  background: #ff8a4c;
+  border-radius: 0.2rem;
+  padding: 0.1rem 0.4rem;
+  margin-right: 0.5rem;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+const BlinderSpeedCluster = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  margin-right: 0.6rem;
+`
+
+const BlinderSpeedLabel = styled.div`
+  font-size: 0.8rem;
+  color: ${(props) => props.theme.colors.text.secondary};
+  white-space: nowrap;
+`
+
+const BlinderSpeedSelect = styled.select`
+  background: #ffffff14;
+  color: inherit;
+  border: 1px solid #ffffff33;
+  border-radius: 0.2rem;
+  font-size: 0.78rem;
+  padding: 0.15rem 0.3rem;
 `
 
 const EmptyState = styled.div`
@@ -439,6 +538,21 @@ const ReleaseButton = styled(Button)<{ $armed: boolean }>`
     font-size: 0.7rem;
     padding: 0.05rem 0.45rem;
     opacity: ${(p) => (p.$armed ? 1 : 0.45)};
+  }
+`
+
+const BlinderButton = styled(Button)<{ $active: boolean }>`
+  && {
+    min-width: 0;
+    font-size: 0.7rem;
+    padding: 0.05rem 0.45rem;
+    color: ${(p) => (p.$active ? '#1a1a1a' : '#f0f0f0')};
+    background: ${(p) => (p.$active ? '#ffffff' : '#ffffff1f')};
+    border: 1px solid ${(p) => (p.$active ? '#ffffff' : '#ffffff66')};
+
+    &:hover {
+      background: ${(p) => (p.$active ? '#ffffff' : '#ffffff33')};
+    }
   }
 `
 

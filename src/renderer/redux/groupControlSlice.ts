@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 import {
+  clampBlinderFadeBeats,
   clampGroupStrobeValue,
   initGroupControl,
   initGroupControlState,
@@ -56,6 +57,9 @@ export const groupControlSlice = createSlice({
       // Touching the fader arms it: 0 is a real strobe value, not "off", so the
       // armed flag is the only thing separating "override" from "leave the scene".
       control.strobeEnabled = true
+      // Dialling the fader is manual takeover, so it is no longer a flash and must
+      // stop forcing brightness to full.
+      control.strobeFlashActive = false
       // Remember anything above zero as the level Flash will fire at, so the button
       // still has something to do once the live value has been released.
       if (control.strobe > 0) {
@@ -71,9 +75,11 @@ export const groupControlSlice = createSlice({
       if (payload.pressed) {
         control.strobe = clampGroupStrobeValue(control.strobeFlashLevel)
         control.strobeEnabled = true
+        control.strobeFlashActive = true
       } else {
         control.strobeEnabled = false
         control.strobe = 0
+        control.strobeFlashActive = false
       }
     },
     /** For inputs with no release to report — an on-screen click, a keyboard chord. */
@@ -82,9 +88,11 @@ export const groupControlSlice = createSlice({
       if (control.strobeEnabled) {
         control.strobeEnabled = false
         control.strobe = 0
+        control.strobeFlashActive = false
       } else {
         control.strobe = clampGroupStrobeValue(control.strobeFlashLevel)
         control.strobeEnabled = true
+        control.strobeFlashActive = true
       }
     },
     /** Hand this group's strobe back to the scene. */
@@ -92,13 +100,48 @@ export const groupControlSlice = createSlice({
       const control = controlFor(state, payload)
       control.strobeEnabled = false
       control.strobe = 0
+      control.strobeFlashActive = false
+    },
+    /**
+     * Panic release: drop every live override on every group.
+     *
+     * Momentary controls can latch if a MIDI note-off is missed, and a latched solo
+     * blacks out the rig from a card the operator may not think to look at. This is
+     * the one control guaranteed to clear it. Brightness is a trim, not an override,
+     * so it is left alone.
+     */
+    releaseAllLiveOverrides: (state) => {
+      for (const control of Object.values(state.byGroup)) {
+        if (control === undefined) continue
+        control.strobeEnabled = false
+        control.strobe = 0
+        control.strobeFlashActive = false
+        control.exclusiveEnabled = false
+        control.blinderActive = false
+      }
     },
     releaseAllGroupStrobes: (state) => {
       for (const control of Object.values(state.byGroup)) {
         if (control === undefined) continue
         control.strobeEnabled = false
         control.strobe = 0
+        control.strobeFlashActive = false
       }
+    },
+    /** Momentary: hold to blind, let go to hand the group straight back. */
+    setGroupBlinder: (
+      state,
+      { payload }: PayloadAction<{ group: string; pressed: boolean }>
+    ) => {
+      controlFor(state, payload.group).blinderActive = payload.pressed === true
+    },
+    /** For inputs with no release to report — an on-screen click, a keyboard chord. */
+    toggleGroupBlinder: (state, { payload }: PayloadAction<string>) => {
+      const control = controlFor(state, payload)
+      control.blinderActive = !control.blinderActive
+    },
+    setBlinderFadeBeats: (state, { payload }: PayloadAction<number>) => {
+      state.blinderFadeBeats = clampBlinderFadeBeats(payload)
     },
     setGroupExclusive: (
       state,
@@ -123,6 +166,7 @@ export const groupControlSlice = createSlice({
         if (control === undefined) continue
         control.strobeEnabled = false
         control.strobe = 0
+        control.strobeFlashActive = false
       }
     }
 
@@ -143,8 +187,12 @@ export const {
   toggleGroupStrobeFlash,
   releaseGroupStrobe,
   releaseAllGroupStrobes,
+  releaseAllLiveOverrides,
   setGroupExclusive,
   toggleGroupExclusive,
+  setGroupBlinder,
+  toggleGroupBlinder,
+  setBlinderFadeBeats,
 } = groupControlSlice.actions
 
 export default groupControlSlice.reducer
