@@ -29,6 +29,8 @@ import {
 } from './groupControlSlice'
 import type { SceneType } from '../../shared/Scenes'
 import { msUntilNextBeatBoundary } from '../../shared/sceneBeatQuantize'
+import { pickSceneForEpicnessLevel } from '../../shared/autoScene'
+import { setActiveScene } from './controlSlice'
 
 const pendingMidiSceneTimeouts: Partial<
   Record<SceneType, ReturnType<typeof setTimeout>>
@@ -97,6 +99,25 @@ export function fireMidiButtonAction(
         ? toggleGroupBlinder(action.group)
         : setGroupBlinder({ group: action.group, pressed })
     )
+  } else if (action.type === 'setEpicnessLevel') {
+    // Resolved now, from the state the operator could see when they pressed —
+    // not after the quantize delay, when auto-scene may have moved on.
+    const nextScene = pickSceneForEpicnessLevel(
+      state.control.light,
+      action.level
+    )
+    if (nextScene !== null) {
+      const prev = pendingMidiSceneTimeouts.light
+      if (prev !== undefined) {
+        clearTimeout(prev)
+      }
+      // Quantized to the beat, the same as MIDI scene buttons.
+      const delayMs = msUntilNextBeatBoundary(rt_state.time)
+      pendingMidiSceneTimeouts.light = setTimeout(() => {
+        delete pendingMidiSceneTimeouts.light
+        dispatch(setActiveScene({ sceneType: 'light', val: nextScene }))
+      }, delayMs)
+    }
   } else if (action.type === 'releaseAllGroupOverrides') {
     dispatch(releaseAllLiveOverrides())
   } else if (action.type === 'setGroupMasterStrobe') {

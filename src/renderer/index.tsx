@@ -923,15 +923,37 @@ let _controlStatePublishDebounceTimer: ReturnType<typeof setTimeout> | null =
   null
 const CONTROL_STATE_PUBLISH_DEBOUNCE_MS = 64
 
+/**
+ * Floor on how often live-DMX state is published to the engine.
+ *
+ * Every publish serializes the whole control state — around 1ms on a real show file
+ * — and then ships it over IPC, which clones it again. Live actions deliberately
+ * skip the debounce so faders track the lights, but left unbounded a handful of MIDI
+ * faders moving together produce hundreds of publishes a second and spend most of a
+ * core on JSON. The engine renders at 90fps and outputs DMX slower still, so
+ * clamping to 60Hz costs nothing visible.
+ *
+ * A trailing publish is always scheduled, so the last position of a fader lands even
+ * if it arrives inside the window.
+ */
+const LIVE_PUBLISH_MIN_INTERVAL_MS = 1000 / 60
+let _lastControlStatePublishAtMs = 0
+let _livePublishTimer: ReturnType<typeof setTimeout> | null = null
+
 function publishControlStateIfChanged() {
   _pendingControlStatePublishRaf = null
   if (_controlStatePublishDebounceTimer !== null) {
     clearTimeout(_controlStatePublishDebounceTimer)
     _controlStatePublishDebounceTimer = null
   }
+  if (_livePublishTimer !== null) {
+    clearTimeout(_livePublishTimer)
+    _livePublishTimer = null
+  }
   if (_isApplyingRemoteState || !_canPublishControlState) {
     return
   }
+  _lastControlStatePublishAtMs = performance.now()
   const cleanState = getCleanReduxState(store.getState())
   const serialized = JSON.stringify(cleanState)
   if (serialized === _lastPublishedControlStateSerialized) {
@@ -949,13 +971,25 @@ function scheduleControlStatePublish() {
   }
 
   if (immediate) {
-    if (!_immediateControlStatePublishQueued) {
-      _immediateControlStatePublishQueued = true
-      queueMicrotask(() => {
-        _immediateControlStatePublishQueued = false
-        publishControlStateIfChanged()
-      })
+    // Already waiting on the rate-limit boundary; that publish will carry this.
+    if (_livePublishTimer !== null) {
+      return
     }
+    const sinceLastMs = performance.now() - _lastControlStatePublishAtMs
+    if (sinceLastMs >= LIVE_PUBLISH_MIN_INTERVAL_MS) {
+      if (!_immediateControlStatePublishQueued) {
+        _immediateControlStatePublishQueued = true
+        queueMicrotask(() => {
+          _immediateControlStatePublishQueued = false
+          publishControlStateIfChanged()
+        })
+      }
+      return
+    }
+    _livePublishTimer = setTimeout(
+      publishControlStateIfChanged,
+      LIVE_PUBLISH_MIN_INTERVAL_MS - sinceLastMs
+    )
     return
   }
 

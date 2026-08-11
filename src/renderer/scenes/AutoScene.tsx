@@ -15,6 +15,10 @@ import DraggableNumber from '../base/DraggableNumber'
 import { ButtonMidiOverlay, SliderMidiOverlay } from 'renderer/base/MidiOverlay'
 import { normalizeAudioInputSettings } from '../../shared/audioEngine'
 import { AutoSceneHelpButton, EnergyMatchHelpButton } from './sceneHelpButtons'
+import {
+  EPICNESS_LEVEL_MAX,
+  EPICNESS_LEVEL_MIN,
+} from '../../shared/autoScene'
 
 export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const dispatch = useDispatch()
@@ -158,7 +162,35 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
             />
           </SliderMidiOverlay>
         ))}
+      {sceneType === 'light' ? <EpicnessLevelButtons /> : null}
     </Root>
+  )
+}
+
+/**
+ * Assignable 1–11 buttons that jump to a scene of that intensity.
+ *
+ * Live triggers rather than a setting: each press picks a *different* scene in range,
+ * so holding a level and tapping it repeatedly walks through the scenes at that
+ * energy. Useful bound to a pad row.
+ */
+function EpicnessLevelButtons() {
+  const levels: number[] = []
+  for (let level = EPICNESS_LEVEL_MIN; level <= EPICNESS_LEVEL_MAX; level++) {
+    levels.push(level)
+  }
+
+  return (
+    <EpicnessRow title="Jump to a scene at this intensity (MIDI-assignable). Press again for a different scene at the same level.">
+      {levels.map((level) => (
+        <ButtonMidiOverlay
+          key={level}
+          action={{ type: 'setEpicnessLevel', level }}
+        >
+          <EpicnessLevelButton>{level}</EpicnessLevelButton>
+        </ButtonMidiOverlay>
+      ))}
+    </EpicnessRow>
   )
 }
 
@@ -168,6 +200,32 @@ const Root = styled.div`
   margin-bottom: 0.5rem;
   gap: 0.35rem;
   min-width: 0;
+  flex-wrap: wrap;
+`
+
+const EpicnessRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.12rem;
+  flex-shrink: 0;
+`
+
+const EpicnessLevelButton = styled.div`
+  min-width: 1.1rem;
+  padding: 0.05rem 0.15rem;
+  text-align: center;
+  font-size: 0.65rem;
+  line-height: 1.25;
+  border-radius: 0.18rem;
+  border: 1px solid #ffffff33;
+  background: #ffffff10;
+  color: ${(props) => props.theme.colors.text.secondary};
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: #ffffff26;
+  }
 `
 
 const Button = styled.div<{ $enabled: boolean }>`

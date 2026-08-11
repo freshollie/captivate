@@ -97,6 +97,55 @@ export function getAutoSceneTargetEnergy(
   return clamp01(auto.epicness)
 }
 
+export const EPICNESS_LEVEL_MIN = 1
+export const EPICNESS_LEVEL_MAX = 11
+
+/**
+ * How far either side of the chosen level a scene can sit and still count.
+ *
+ * Expressed in levels, so it does not have to be restated if the scale changes. A
+ * window rather than an exact match is what makes the button useful: it gives the
+ * picker several scenes to alternate between at a given intensity.
+ */
+export const EPICNESS_LEVEL_TOLERANCE = 1.5
+
+/** Level 1..11 as the 0..1 epicness scenes are stored in. */
+export function epicnessLevelToEnergy(level: number): number {
+  const clamped = Math.min(
+    EPICNESS_LEVEL_MAX,
+    Math.max(EPICNESS_LEVEL_MIN, Math.round(level))
+  )
+  return (clamped - EPICNESS_LEVEL_MIN) / (EPICNESS_LEVEL_MAX - EPICNESS_LEVEL_MIN)
+}
+
+/**
+ * Which scene an epicness button should switch to, or null to stay put.
+ *
+ * The active scene is never a candidate, so pressing the same level twice moves to a
+ * different scene of that intensity. When nothing else is in range the answer is
+ * null and the caller leaves the scene alone rather than restarting the current one.
+ */
+export function pickSceneForEpicnessLevel(
+  light: LightScenes_t,
+  level: number,
+  random: () => number = Math.random
+): string | null {
+  const target = epicnessLevelToEnergy(level)
+  const tolerance =
+    EPICNESS_LEVEL_TOLERANCE / (EPICNESS_LEVEL_MAX - EPICNESS_LEVEL_MIN)
+
+  const candidates = light.ids.filter((id) => {
+    if (id === light.active) return false
+    const epicness = light.byId[id]?.epicness
+    if (epicness === undefined || !Number.isFinite(epicness)) return false
+    return Math.abs(clamp01(epicness) - target) <= tolerance + 1e-9
+  })
+
+  if (candidates.length === 0) return null
+  const index = Math.floor(clamp01(random()) * candidates.length)
+  return candidates[Math.min(index, candidates.length - 1)] ?? null
+}
+
 /** Next light scene auto would pick at the current energy (for UI cue highlight). */
 export function resolveLightAutoSceneCueId(
   light: LightScenes_t,

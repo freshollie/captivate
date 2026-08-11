@@ -132,6 +132,12 @@ interface SetGroupMasterBlinder {
   type: 'setGroupMasterBlinder'
 }
 
+/** Jump to a scene at the given intensity, 1..11. One-shot. */
+interface SetEpicnessLevel {
+  type: 'setEpicnessLevel'
+  level: number
+}
+
 /** Drop every live group override at once. One-shot. */
 interface ReleaseAllGroupOverrides {
   type: 'releaseAllGroupOverrides'
@@ -209,6 +215,7 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupMasterStrobe',
   'setGroupMasterBlinder',
   'releaseAllGroupOverrides',
+  'setEpicnessLevel',
   'releaseGroupStrobe',
 ])
 
@@ -240,6 +247,7 @@ export type MidiAction =
   | SetGroupMasterStrobe
   | SetGroupMasterBlinder
   | ReleaseAllGroupOverrides
+  | SetEpicnessLevel
   | ReleaseGroupStrobe
   | SetBpm
   | TapTempo
@@ -368,6 +376,9 @@ export function getActionID(action: MidiAction) {
   }
   if (action.type === 'setGroupControl') {
     return `${action.type}:${action.control}:${action.group}`
+  }
+  if (action.type === 'setEpicnessLevel') {
+    return `${action.type}:${action.level}`
   }
   if (
     action.type === 'setGroupExclusive' ||

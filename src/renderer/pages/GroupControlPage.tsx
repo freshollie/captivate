@@ -37,6 +37,11 @@ const FADER_RADIUS_REM = 0.5
 /** Virtual group matched by pan/tilt channels rather than group assignment. */
 const MOVERS_GROUP = 'Movers'
 const BLINDER_FADE_OPTIONS = [0, 0.25, 0.5, 1, 2, 4, 8]
+/**
+ * Shared fallback for groups with no state yet. Must be a stable reference: building
+ * one per selector call makes every untouched card re-render on every store action.
+ */
+const EMPTY_GROUP_CONTROL: GroupControl = Object.freeze(initGroupControl())
 
 export default function GroupControlPage({
   hideStatusBar = false,
@@ -122,11 +127,18 @@ function Header({ groupCount }: { groupCount: number }) {
           control?.blinderActive === true
       ).length
   )
-  const soloGroups = useTypedSelector((state) =>
+  // Selected as a joined string, not an array: a fresh array compares unequal every
+  // time and would re-render the header on every action in the app.
+  const soloGroupKey = useTypedSelector((state) =>
     Object.entries(state.groupControl.byGroup)
       .filter(([, control]) => control?.exclusiveEnabled === true)
       .map(([group]) => group)
       .sort()
+      .join('\n')
+  )
+  const soloGroups = useMemo(
+    () => (soloGroupKey.length === 0 ? [] : soloGroupKey.split('\n')),
+    [soloGroupKey]
   )
 
   return (
@@ -186,11 +198,16 @@ function Header({ groupCount }: { groupCount: number }) {
 function MasterBar() {
   const dispatch = useDispatch()
   const master = useTypedSelector((state) => state.groupControl.master)
-  const exemptGroups = useTypedSelector((state) =>
+  const exemptGroupKey = useTypedSelector((state) =>
     Object.entries(state.groupControl.byGroup)
       .filter(([, control]) => control?.followMaster === false)
       .map(([group]) => group)
       .sort()
+      .join('\n')
+  )
+  const exemptGroups = useMemo(
+    () => (exemptGroupKey.length === 0 ? [] : exemptGroupKey.split('\n')),
+    [exemptGroupKey]
   )
 
   return (
@@ -263,7 +280,7 @@ function GroupCard({
 }) {
   const dispatch = useDispatch()
   const control: GroupControl = useTypedSelector(
-    (state) => state.groupControl.byGroup[group] ?? initGroupControl()
+    (state) => state.groupControl.byGroup[group] ?? EMPTY_GROUP_CONTROL
   )
 
   const isActive = isGroupControlActive(control)
