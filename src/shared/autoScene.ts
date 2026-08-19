@@ -107,7 +107,7 @@ export const EPICNESS_LEVEL_MAX = 11
  * window rather than an exact match is what makes the button useful: it gives the
  * picker several scenes to alternate between at a given intensity.
  */
-export const EPICNESS_LEVEL_TOLERANCE = 1.5
+export const EPICNESS_LEVEL_TOLERANCE = 0.5
 
 /** Level 1..11 as the 0..1 epicness scenes are stored in. */
 export function epicnessLevelToEnergy(level: number): number {
