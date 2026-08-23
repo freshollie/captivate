@@ -13,6 +13,7 @@ import {
   resolveMoverPhaseRungs,
 } from '../../shared/moverPhaseFollow'
 import { getOutputParamsAtPhaseOffset } from '../../shared/modulation'
+import { fixtureGroupNamesWithSubFixtures } from '../../shared/fixtureGroups'
 import { evaluateSceneGroups } from '../../shared/sceneGroups'
 import { defaultOutputParams, getParam, type Params } from '../../shared/params'
 import { useActiveLightScene, useDmxSelector, useTypedSelector } from '../redux/store'
@@ -35,12 +36,11 @@ function clamp01(value: number): number {
 
 function fixtureMatchesSplitGroups(
   fixtureGroups: string[],
+  fixtureType: FixtureType | undefined,
   isMoverFixture: boolean,
   splitGroups: Record<string, boolean | undefined>
 ): boolean {
-  const groupedFixture = new Set(
-    fixtureGroups.map((group) => group.trim()).filter((group) => group.length > 0)
-  )
+  const groupedFixture = fixtureGroupNamesWithSubFixtures(fixtureGroups, fixtureType)
 
   return evaluateSceneGroups(splitGroups, (group) => {
     const normalized = group.trim()
@@ -77,7 +77,7 @@ function collectSplitMovers(
       return
     }
 
-    if (!fixtureMatchesSplitGroups(fixture.groups, true, splitGroups)) {
+    if (!fixtureMatchesSplitGroups(fixture.groups, fixtureType, true, splitGroups)) {
       return
     }
 
@@ -140,7 +140,7 @@ export function useSplitMoverCount(splitIndex: number): number {
     for (const fixture of universe) {
       const fixtureType = fixtureTypesByID[fixture.type]
       if (fixtureType === undefined || !isMoverFixtureType(fixtureType)) continue
-      if (!fixtureMatchesSplitGroups(fixture.groups, true, splitGroups)) continue
+      if (!fixtureMatchesSplitGroups(fixture.groups, fixtureType, true, splitGroups)) continue
       count += 1
     }
     return count

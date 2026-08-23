@@ -39,6 +39,7 @@ import {
 import { sumVisSliders } from '../visualizer/visualSliderAssignments'
 import { listAtmosFxtrs } from '../../shared/atmosphericsMapping'
 import { sumAtmosSliders } from '../atmospherics/atmosSliderAssignments'
+import { fixtureGroupNamesWithSubFixtures } from '../../shared/fixtureGroups'
 import { evaluateSceneGroups } from '../../shared/sceneGroups'
 import { isDedicatedGroupSplit, visSplitIdx } from '../scenes/splitUiVisibility'
 import { LASER_SPLIT_PARAM_KEYS } from '../laser/laserSplitLink'
@@ -171,10 +172,9 @@ export default function ParamsControl({ splitIndex }: Params) {
         continue
       }
 
-      const groupedFixture = new Set(
-        fixture.groups
-          .map((group) => group.trim())
-          .filter((group) => group.length > 0)
+      const groupedFixture = fixtureGroupNamesWithSubFixtures(
+        fixture.groups,
+        fixtureType
       )
       const isAtmosFixture =
         typeof fixture.id === 'string' &&

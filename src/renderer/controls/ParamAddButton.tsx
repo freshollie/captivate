@@ -29,6 +29,7 @@ import PositionIcon from '@mui/icons-material/PictureInPicture'
 import axisIconSrc from '../../../assets/axis.svg'
 import { getAllParamKeys, getCustomChannels } from 'renderer/redux/dmxSlice'
 import { sumVisSliders } from '../visualizer/visualSliderAssignments'
+import { fixtureGroupNamesWithSubFixtures } from 'shared/fixtureGroups'
 import { evaluateSceneGroups } from 'shared/sceneGroups'
 import {
   fixtureChannelLeafChannels,
@@ -362,10 +363,9 @@ export default function ParamAddButton({ splitIndex }: Props) {
         continue
       }
 
-      const groupedFixture = new Set(
-        fixture.groups
-          .map((group) => group.trim())
-          .filter((group) => group.length > 0)
+      const groupedFixture = fixtureGroupNamesWithSubFixtures(
+        fixture.groups,
+        fixtureType
       )
 
       const matchesSplit = evaluateSceneGroups(splitGroups, (group) => {

@@ -20,6 +20,7 @@ import {
   getLedPointLayout3D,
   normalizeLedFixtureForRuntime,
 } from '../../shared/ledFixtures'
+import { fixtureGroupNamesWithSubFixtures } from '../../shared/fixtureGroups'
 import { METERS_PER_FOOT, StageDimensions } from '../../shared/stage'
 import type { MoverPreviewFixture } from './lightingPreviewTypes'
 
@@ -127,18 +128,9 @@ function previewEmitterChannelIndexes(
 }
 
 function getFixtureGroups(fixture: Fixture, fixtureType: FixtureType): string[] {
-  const set = new Set<string>()
-  for (const group of fixture.groups) {
-    const trimmed = group.trim()
-    if (trimmed.length > 0) set.add(trimmed)
-  }
-  for (const sub of fixtureType.subFixtures) {
-    for (const group of sub.groups) {
-      const trimmed = group.trim()
-      if (trimmed.length > 0) set.add(trimmed)
-    }
-  }
-  return Array.from(set)
+  return Array.from(
+    fixtureGroupNamesWithSubFixtures(fixture.groups, fixtureType)
+  )
 }
 
 export function buildLightingPreviewRows(

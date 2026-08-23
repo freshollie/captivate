@@ -34,7 +34,7 @@ import {
 } from './dmxColors'
 import { evaluateSceneGroups } from './sceneGroups'
 import {
-  getFixtureGroupPickerOptions,
+  getTargetableGroupOptions,
   normalizeFixtureGroupList,
 } from './fixtureGroups'
 
@@ -1310,12 +1310,15 @@ export function getSortedGroups(
  * Like {@link getSortedGroups}, but only considers fixture **types that appear on the DMX
  * universe** (placed fixtures). Omits groups defined only on fixture definitions that are
  * not currently used — keeps split / scene group pickers aligned with the active rig.
+ *
+ * Includes subfixture groups of patched fixture types: `flatten_fixture` merges them into
+ * each subfixture partition's groups, so splits can target them once they are offered.
  */
 export function getSortedGroupsFromPlacedFixtures(
   universe: Universe,
   fixtureTypesById: { [id: string]: FixtureType }
 ) {
-  return getFixtureGroupPickerOptions(universe, fixtureTypesById)
+  return getTargetableGroupOptions(universe, fixtureTypesById)
 }
 
 function clampAxisDmxValue(value: number, fallback: number = DMX_MIN_VALUE) {

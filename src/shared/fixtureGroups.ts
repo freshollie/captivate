@@ -131,3 +131,94 @@ export function syncFixtureGroupCatalog(
 ): void {
   pruneFixtureGroupsInUniverse(universe, fixtureTypesById)
 }
+
+/**
+ * Group names assigned to subfixtures of fixture types patched on the universe.
+ * Subfixture groups live on the fixture *type*, so they are invisible to the
+ * universe-level scan in {@link countAssignedFixtureGroups}.
+ */
+export function subFixtureGroupNamesOnUniverse(
+  universe: Universe,
+  fixtureTypesById: { [id: string]: FixtureType }
+): string[] {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const fixture of universe) {
+    const fixtureType = fixtureTypesById[fixture.type]
+    if (fixtureType === undefined) {
+      continue
+    }
+    for (const sub of fixtureType.subFixtures) {
+      for (const raw of sub.groups) {
+        const name = normalizeFixtureGroupName(raw)
+        if (name === null) {
+          continue
+        }
+        const key = name.toLowerCase()
+        if (seen.has(key)) {
+          continue
+        }
+        seen.add(key)
+        names.push(name)
+      }
+    }
+  }
+  return names.sort(compareFixtureGroupNames)
+}
+
+/**
+ * Groups a split (or the group control page) can target: everything the fixture picker
+ * offers, plus subfixture groups from patched fixture types. `flatten_fixture` merges
+ * each subfixture's groups into its partition, so those names already match at output
+ * time — they just were not offered anywhere to select.
+ */
+export function getTargetableGroupOptions(
+  universe: Universe,
+  fixtureTypesById: { [id: string]: FixtureType }
+): string[] {
+  const options = getFixtureGroupPickerOptions(universe, fixtureTypesById)
+  const seen = new Set(options.map((name) => name.toLowerCase()))
+
+  for (const name of subFixtureGroupNamesOnUniverse(universe, fixtureTypesById)) {
+    const key = name.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    options.push(name)
+  }
+
+  return options.sort(compareFixtureGroupNames)
+}
+
+/**
+ * Every group name a fixture takes part in: its own groups plus the groups assigned to any
+ * of its subfixtures. Group matching at output time is per-partition — `flatten_fixture`
+ * merges each subfixture's groups into its partition — so UI scans asking "is this fixture
+ * in the split?" must consider subfixture groups too, or a split targeting only a
+ * subfixture group looks empty and offers no controls.
+ *
+ * Names are trimmed but keep their case: callers compare them against split group keys,
+ * which are matched exactly.
+ */
+export function fixtureGroupNamesWithSubFixtures(
+  fixtureGroups: string[],
+  fixtureType: Pick<FixtureType, 'subFixtures'> | undefined
+): Set<string> {
+  const names = new Set<string>()
+  for (const raw of fixtureGroups) {
+    const name = raw.trim()
+    if (name.length > 0) {
+      names.add(name)
+    }
+  }
+  for (const sub of fixtureType?.subFixtures ?? []) {
+    for (const raw of sub.groups) {
+      const name = raw.trim()
+      if (name.length > 0) {
+        names.add(name)
+      }
+    }
+  }
+  return names
+}

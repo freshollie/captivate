@@ -6,6 +6,7 @@ import {
   type FixtureType,
   type Universe,
 } from './dmxFixtures'
+import { fixtureGroupNamesWithSubFixtures } from './fixtureGroups'
 import type { SceneGroups } from './sceneGroups'
 import { evaluateSceneGroups } from './sceneGroups'
 import type { LedFixture } from './ledFixtures'
@@ -69,10 +70,9 @@ export function getSplitAuxColorGates(
     const fixtureType = dmx.fixtureTypesByID[fixture.type]
     if (fixtureType === undefined) continue
 
-    const groupedFixture = new Set(
-      fixture.groups
-        .map((group) => group.trim())
-        .filter((group) => group.length > 0)
+    const groupedFixture = fixtureGroupNamesWithSubFixtures(
+      fixture.groups,
+      fixtureType
     )
     const isAtmosFixture =
       typeof fixture.id === 'string' &&
