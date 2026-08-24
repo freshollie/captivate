@@ -71,15 +71,7 @@ export default function ParamSlider({
         </CornerRemoveButton>
       ) : null}
       <VerticalSplitLabel text={sliderLabel} />
-      <div
-        style={{
-          flex: '1 1 auto',
-          minHeight: 0,
-          alignSelf: 'stretch',
-          paddingTop: 0,
-          boxSizing: 'border-box',
-        }}
-      >
+      <SliderArea>
         <SliderBase
           orientation="vertical"
           radius={radius}
@@ -103,8 +95,11 @@ export default function ParamSlider({
             color={manualCursorColor}
             border
           />
+          <ValueReadout style={{ bottom: `${value * 100}%` }} aria-hidden>
+            {formatParamPercent(value)}
+          </ValueReadout>
         </SliderBase>
-      </div>
+      </SliderArea>
     </>
   )
 
@@ -135,6 +130,40 @@ const defaultWrapperStyle: CSSProperties = {
   )
 }
 
+// Shows the exact slider value on hover (and while dragging), pinned to the
+// manual cursor so the number reads right off the handle.
+const ValueReadout = styled.div`
+  position: absolute;
+  left: 100%;
+  margin-left: 0.32rem;
+  transform: translateY(50%);
+  padding: 0.02rem 0.22rem;
+  border-radius: 0.2rem;
+  border: 1px solid #ffffff1c;
+  background: #0b1020d9;
+  color: #e7eeffcc;
+  font-size: 0.6rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 90ms linear;
+  z-index: 7;
+`
+
+const SliderArea = styled.div`
+  flex: 1 1 auto;
+  min-height: 0;
+  align-self: stretch;
+  box-sizing: border-box;
+
+  &:hover ${ValueReadout} {
+    opacity: 1;
+  }
+`
+
 const CornerRemoveButton = styled.button`
   position: absolute;
   top: -0.42rem;
@@ -157,6 +186,12 @@ const CornerRemoveButton = styled.button`
     border-color: #ffffff77;
   }
 `
+
+/** 0..1 param as a percentage, keeping a decimal only when it matters. */
+function formatParamPercent(value: number): string {
+  const percent = Math.round(value * 1000) / 10
+  return `${Number.isInteger(percent) ? percent : percent.toFixed(1)}%`
+}
 
 function VerticalSplitLabel({ text }: { text: string }) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
