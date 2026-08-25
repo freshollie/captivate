@@ -1334,8 +1334,16 @@ export function fixGroupControlState(
       strobe: 0,
       strobeFlashLevel: flashLevel > 0 ? flashLevel : DEFAULT_STROBE_FLASH_LEVEL,
       strobeFlashActive: false,
+      strobeFlashHeld: false,
+      strobeLocked: false,
       exclusiveEnabled: false,
+      exclusiveHeld: false,
+      exclusiveLocked: false,
       blinderActive: false,
+      blinderHeld: false,
+      blinderLocked: false,
+      releaseHeld: false,
+      releaseUsedForLock: false,
       // Opt-out, so a group written before the master existed still follows it.
       // `followMaster` was the spelling before the flag narrowed to the master's
       // strobe and blinder — the dimmer now reaches everything — so read it as a

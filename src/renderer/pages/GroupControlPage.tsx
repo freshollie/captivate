@@ -178,19 +178,21 @@ function Header({ groupCount }: { groupCount: number }) {
           SOLO: {soloGroups.join(', ')}
         </SoloWarning>
       ) : null}
-      <BriefTooltip title="Drop every live override on every group — strobes, solos and blinders. Brightness trims are left alone.">
-        <span>
-          <Button
-            disabled={liveCount === 0}
-            variant="contained"
-            size="small"
-            color={soloGroups.length > 0 ? 'warning' : 'primary'}
-            onClick={() => dispatch(releaseAllLiveOverrides())}
-          >
-            Release all
-          </Button>
-        </span>
-      </BriefTooltip>
+      <ButtonMidiOverlay action={{ type: 'releaseAllGroupOverrides' }}>
+        <BriefTooltip title="Drop every live override on every group — strobes, solos, blinders and any locks holding them. Brightness trims are left alone. Assign it to a MIDI pad: this is the panic button.">
+          <span>
+            <Button
+              disabled={liveCount === 0}
+              variant="contained"
+              size="small"
+              color={soloGroups.length > 0 ? 'warning' : 'primary'}
+              onClick={() => dispatch(releaseAllLiveOverrides())}
+            >
+              Release all
+            </Button>
+          </span>
+        </BriefTooltip>
+      </ButtonMidiOverlay>
     </HeaderRoot>
   )
 }
@@ -228,7 +230,11 @@ function MasterBar() {
                 onChange={(value) => dispatch(setMasterBrightness(value))}
                 ariaLabel="Master dimmer"
               >
-                <MasterCap $value={master.brightness} aria-hidden />
+                <MasterCap
+                  $dim={master.brightness < 1}
+                  style={{ left: `${master.brightness * 100}%` }}
+                  aria-hidden
+                />
               </SliderBase>
             </MasterTrack>
           </BriefTooltip>
@@ -288,6 +294,8 @@ function GroupCard({
   )
 
   const isActive = isGroupControlActive(control)
+  const locked =
+    control.strobeLocked || control.exclusiveLocked || control.blinderLocked
   // Flash / Excl pull the group up to full while held; show that rather than the
   // fader's resting position, or the readout would contradict the lights.
   const brightnessForcedFull = isGroupBrightnessForcedFull(control)
@@ -339,11 +347,20 @@ function GroupCard({
         />
         <Fader
           label="Strobe"
-          readout={control.strobeEnabled ? `${control.strobe}` : '--'}
-          value={control.strobe / DMX_MAX_VALUE}
+          // Parked at the level Flash will fire at while the strobe is down, so the
+          // cap does not jump when it comes up — and bracketed to say it is not live.
+          readout={
+            control.strobeEnabled
+              ? `${control.strobe}`
+              : `(${control.strobeFlashLevel})`
+          }
+          value={
+            (control.strobeEnabled ? control.strobe : control.strobeFlashLevel) /
+            DMX_MAX_VALUE
+          }
           enabled={control.strobeEnabled}
           midiAction={{ type: 'setGroupControl', group, control: 'strobe' }}
-          tooltip="Raw DMX value written to this group's strobe channels (0–255). Touch to take it over; Release hands it back to the scene."
+          tooltip="Raw DMX value written to this group's strobe channels (0–255). Only trims a strobe that is already up — Flash arms it, and locking Flash on (hold it, tap Release) keeps it up so this fader can be dialled with the pad let go."
           onChange={(value) =>
             dispatch(setGroupStrobe({ group, value: value * DMX_MAX_VALUE }))
           }
@@ -352,9 +369,16 @@ function GroupCard({
 
       <CardFooter>
         <ButtonMidiOverlay action={{ type: 'setGroupExclusive', group }}>
-          <BriefTooltip title="Solo: hold everything outside this group dark. Assign to a MIDI pad to hold it momentarily.">
+          <BriefTooltip
+            title={
+              control.exclusiveLocked
+                ? 'Solo locked on: it stayed up when the pad was let go. Press Release to unlock and hand the rig back.'
+                : 'Solo: hold everything outside this group dark. To lock it on, hold it and tap Release — or hold Release and press it. Assign to a MIDI pad to hold it momentarily.'
+            }
+          >
             <ExclusiveButton
               $active={control.exclusiveEnabled}
+              $locked={control.exclusiveLocked}
               size="small"
               onClick={() => dispatch(toggleGroupExclusive(group))}
             >
@@ -363,9 +387,16 @@ function GroupCard({
           </BriefTooltip>
         </ButtonMidiOverlay>
         <ButtonMidiOverlay action={{ type: 'setGroupBlinder', group }}>
-          <BriefTooltip title="Hold to blind: full pulsing white over the scene, whether or not the scene uses this group. Assign to a MIDI pad to hold it momentarily.">
+          <BriefTooltip
+            title={
+              control.blinderLocked
+                ? 'Blinder locked on: it stayed up when the pad was let go. Press Release to unlock and fade it out.'
+                : 'Hold to blind: full pulsing white over the scene, whether or not the scene uses this group. To lock it on, hold it and tap Release — or hold Release and press it. Assign to a MIDI pad to hold it momentarily.'
+            }
+          >
             <BlinderButton
               $active={control.blinderActive}
+              $locked={control.blinderLocked}
               size="small"
               onClick={() => dispatch(toggleGroupBlinder(group))}
             >
@@ -375,7 +406,7 @@ function GroupCard({
         </ButtonMidiOverlay>
         <ButtonMidiOverlay action={{ type: 'setGroupStrobeFlash', group }}>
           <BriefTooltip
-            title={`Hold to strobe at ${control.strobeFlashLevel} DMX, let go to drop it. Assign to a MIDI pad to hold it momentarily.`}
+            title={`Hold to strobe at ${control.strobeFlashLevel} DMX, let go to drop it. To lock it on, hold it and tap Release — or hold Release and press it. Assign to a MIDI pad to hold it momentarily.`}
           >
             <FlashButton
               $active={control.strobeEnabled}
@@ -387,19 +418,43 @@ function GroupCard({
           </BriefTooltip>
         </ButtonMidiOverlay>
         <ButtonMidiOverlay action={{ type: 'releaseGroupStrobe', group }}>
-          <BriefTooltip title="Release this group's strobe back to the scene. Assignable to a MIDI pad.">
+          <BriefTooltip title={releaseTooltip(control)}>
             <ReleaseButton
-              $armed={control.strobeEnabled}
+              $armed={control.strobeEnabled || locked}
+              $locked={locked}
               size="small"
               onClick={() => dispatch(releaseGroupStrobe(group))}
             >
-              Release
+              {locked ? 'Unlock' : 'Release'}
             </ReleaseButton>
           </BriefTooltip>
         </ButtonMidiOverlay>
       </CardFooter>
     </Card>
   )
+}
+
+/** "Strobe", "Strobe and Solo", "Strobe, Solo and Blind". */
+function formatList(names: string[]): string {
+  if (names.length < 2) return names.join('')
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/**
+ * Release carries three jobs — release, lock and unlock — so it has to say which one
+ * the next press will do.
+ */
+function releaseTooltip(control: GroupControl): string {
+  const lockedNames = [
+    control.strobeLocked ? 'Strobe' : null,
+    control.exclusiveLocked ? 'Solo' : null,
+    control.blinderLocked ? 'Blind' : null,
+  ].filter((name): name is string => name !== null)
+
+  if (lockedNames.length > 0) {
+    return `${formatList(lockedNames)} locked on: still up with the pad let go. Tap to unlock and hand it back — or hold this and press another pad to add that one to the lock.`
+  }
+  return "Tap to release this group's strobe back to the scene. Held on a pad it locks instead: anything pressed while it is down locks on, as does anything already held when you tap it. Assignable to a MIDI pad."
 }
 
 function Fader({
@@ -438,7 +493,11 @@ function Fader({
             title={tooltip}
             ariaLabel={`${label} override`}
           >
-            <FaderCap $value={value} $enabled={enabled} aria-hidden />
+            <FaderCap
+              $enabled={enabled}
+              style={{ bottom: `${value * 100}%` }}
+              aria-hidden
+            />
           </SliderBase>
         </FaderTrack>
       </SliderMidiOverlay>
@@ -517,15 +576,24 @@ const MasterTrack = styled.div`
   height: 1.4rem;
 `
 
-const MasterCap = styled.div<{ $value: number }>`
+/**
+ * Position comes in as an inline style, never through the template.
+ *
+ * styled-components keys its classes on the CSS a render produces, so a fader
+ * position interpolated into the template mints a new class and a new stylesheet
+ * rule for *every* value the cap passes through — hundreds per drag, never
+ * collected, each insertion re-resolving style across a sheet that only grows. That
+ * is what made dragging a fader lag the whole app. `SliderCursor` has always done it
+ * this way; only the props that pick between fixed looks belong in the template.
+ */
+const MasterCap = styled.div<{ $dim: boolean }>`
   position: absolute;
   top: 50%;
-  left: ${(p) => p.$value * 100}%;
   width: 0.5rem;
   height: 1.15rem;
   transform: translate(-50%, -50%);
   border-radius: 0.12rem;
-  background: ${(p) => (p.$value < 1 ? '#ffd479' : '#e8e8e8')};
+  background: ${(p) => (p.$dim ? '#ffd479' : '#e8e8e8')};
   box-shadow: 0 1px 3px #0007;
 `
 
@@ -707,10 +775,10 @@ const FaderTrack = styled.div`
   min-height: 0;
 `
 
-const FaderCap = styled.div<{ $value: number; $enabled: boolean }>`
+/** Position inline, for the reason spelled out on `MasterCap`. */
+const FaderCap = styled.div<{ $enabled: boolean }>`
   position: absolute;
   left: 50%;
-  bottom: ${(p) => p.$value * 100}%;
   width: 1.6rem;
   height: 0.72rem;
   transform: translate(-50%, 50%);
@@ -737,23 +805,35 @@ const CardFooter = styled.div`
   margin-top: 0.25rem;
 `
 
-const ReleaseButton = styled(Button)<{ $armed: boolean }>`
+const ReleaseButton = styled(Button)<{ $armed: boolean; $locked: boolean }>`
   && {
     min-width: 0;
     font-size: 0.7rem;
     padding: 0.05rem 0.45rem;
     opacity: ${(p) => (p.$armed ? 1 : 0.45)};
+    /* A locked strobe outlives the pad that started it, so it has to read as a
+       standing override rather than an idle button. */
+    color: ${(p) => (p.$locked ? '#1a1a1a' : undefined)};
+    background: ${(p) => (p.$locked ? '#ffd479' : undefined)};
+    border: ${(p) => (p.$locked ? '1px solid #ffd479' : undefined)};
+
+    &:hover {
+      background: ${(p) => (p.$locked ? '#ffe0a0' : undefined)};
+    }
   }
 `
 
-const BlinderButton = styled(Button)<{ $active: boolean }>`
+const BlinderButton = styled(Button)<{ $active: boolean; $locked?: boolean }>`
   && {
     min-width: 0;
     font-size: 0.7rem;
     padding: 0.05rem 0.45rem;
     color: ${(p) => (p.$active ? '#1a1a1a' : '#f0f0f0')};
     background: ${(p) => (p.$active ? '#ffffff' : '#ffffff1f')};
-    border: 1px solid ${(p) => (p.$active ? '#ffffff' : '#ffffff66')};
+    /* Locked takes the lock amber ring, so a standing blinder reads differently
+       from a pad being held. */
+    border: 1px solid
+      ${(p) => (p.$locked === true ? '#ffd479' : p.$active ? '#ffffff' : '#ffffff66')};
 
     &:hover {
       background: ${(p) => (p.$active ? '#ffffff' : '#ffffff33')};
@@ -776,14 +856,17 @@ const FlashButton = styled(Button)<{ $active: boolean }>`
   }
 `
 
-const ExclusiveButton = styled(Button)<{ $active: boolean }>`
+const ExclusiveButton = styled(Button)<{ $active: boolean; $locked: boolean }>`
   && {
     min-width: 0;
     font-size: 0.7rem;
     padding: 0.05rem 0.45rem;
     color: ${(p) => (p.$active ? '#1a1a1a' : '#ffcf9e')};
     background: ${(p) => (p.$active ? '#ff8a4c' : '#ff8a4c22')};
-    border: 1px solid ${(p) => (p.$active ? '#ff8a4c' : '#ff8a4c66')};
+    /* Locked keeps the solo orange but takes the lock amber ring the Unlock button
+       uses, so a standing solo reads differently from a pad being held. */
+    border: 1px solid
+      ${(p) => (p.$locked ? '#ffd479' : p.$active ? '#ff8a4c' : '#ff8a4c66')};
 
     &:hover {
       background: ${(p) => (p.$active ? '#ff9d68' : '#ff8a4c33')};

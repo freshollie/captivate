@@ -232,6 +232,9 @@ export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupBlinder',
   'setGroupMasterStrobe',
   'setGroupMasterBlinder',
+  // Not because it engages anything while down, but because holding it is what turns
+  // it into the lock modifier for the pads pressed during the hold.
+  'releaseGroupStrobe',
 ])
 
 export type MidiAction =

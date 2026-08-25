@@ -15,6 +15,7 @@ import {
 } from './guiSlice'
 import {
   releaseGroupStrobe,
+  setGroupRelease,
   setGroupExclusive,
   setGroupBlinder,
   setGroupStrobeFlash,
@@ -86,7 +87,13 @@ export function fireMidiButtonAction(
   } else if (action.type === 'laserTool') {
     dispatch(setLaserToolFromMidiMapping({ tool: action.tool }))
   } else if (action.type === 'releaseGroupStrobe') {
-    dispatch(releaseGroupStrobe(action.group))
+    // Momentary, so it can be *held* as the lock modifier; a click or keyboard chord
+    // has no release to report and falls back to a plain tap.
+    dispatch(
+      pressed === undefined
+        ? releaseGroupStrobe(action.group)
+        : setGroupRelease({ group: action.group, pressed })
+    )
   } else if (action.type === 'setGroupStrobeFlash') {
     dispatch(
       pressed === undefined

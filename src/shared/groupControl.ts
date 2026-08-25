@@ -18,37 +18,111 @@ import { inferColorKind } from './dmxColors'
  *   way to express — `ChannelStrobe` only holds a solid and a strobe constant — so
  *   there is no scene value to scale against. Because 0 is a meaningful strobe value
  *   rather than "off", it needs an explicit armed flag and an explicit release.
+ *
+ *   Only Flash arms it. The fader trims a strobe that is already live and is inert
+ *   otherwise, so a knocked fader — or a controller spilling its positions when it
+ *   connects — cannot start the rig strobing. Flash plus Release locks the strobe on,
+ *   which is what frees a hand to dial the fader.
  */
 export interface GroupControl {
   /** 0..1, multiplied into the scene's level. 1 = no change. Always applied. */
   brightness: number
-  /** Armed by touching the fader, cleared by Release or a light-scene change. */
+  /**
+   * Armed by Flash — never by the fader — and cleared by Release, by letting go of an
+   * unlocked flash, or, if it was locked, by a light-scene change.
+   */
   strobeEnabled: boolean
   /** Raw DMX 0..255 written to the group's strobe channels. */
   strobe: number
   /**
    * Level the Flash button fires at, remembered from the last value dialled on the
-   * fader. Survives Release and scene changes — those clear the *live* strobe, but
+   * fader. Survives Release and scene changes — those can clear the *live* strobe, but
    * the flash needs something to fire or the button would be inert.
    */
   strobeFlashLevel: number
   /**
-   * True only while the Flash button holds the strobe, as opposed to the fader
-   * having armed it. Both light the same channels; only the flash forces brightness
-   * to full, so they have to be told apart.
+   * True while Flash is engaged, as opposed to the strobe standing on a lock. Both
+   * light the same channels; only an engaged flash forces brightness to full, so they
+   * have to be told apart.
    */
   strobeFlashActive: boolean
   /**
+   * True only while a *press* is holding Flash — a MIDI pad down, and nothing else.
+   * An on-screen click latches instead, because no release will ever be reported for
+   * it. Implies `strobeFlashActive`.
+   *
+   * Its own flag because the lock gesture is "Release while the pad is down": read
+   * off `strobeFlashActive` instead, an on-screen latch would turn every Release
+   * click into a lock toggle and leave no way to hand the strobe back.
+   */
+  strobeFlashHeld: boolean
+  /**
+   * Keeps the strobe up after Flash is let go, until Release. Set by tapping Release
+   * while holding Flash — or by pressing Flash while Release is held — and cleared by
+   * the same gesture, by any release, or by the next light scene.
+   *
+   * The point is the fader: it only moves a live strobe, so without a lock the level
+   * could only be dialled with a pad held down.
+   */
+  strobeLocked: boolean
+  /**
    * Solo. While any group is exclusive, fixtures outside every exclusive group are
-   * held dark. Momentary by design — this is a "hit it for the drop" control.
+   * held dark. Momentary by default — this is a "hit it for the drop" control — but
+   * it can be locked on the same way the strobe can.
    */
   exclusiveEnabled: boolean
   /**
+   * True only while a *press* is holding Solo down, so Release can tell a pad being
+   * held from a solo latched off the card. The strobe's `strobeFlashHeld` in every
+   * respect; see it for why an on-screen click deliberately does not count.
+   */
+  exclusiveHeld: boolean
+  /**
+   * Keeps the solo up after the pad is let go, until Release or the next light scene.
+   * Set by tapping Release while holding Solo, or pressing Solo while Release is held.
+   *
+   * Unlike a locked strobe, a locked solo keeps pulling its own group to full: that
+   * is not a flourish on top of the solo, it *is* the solo — everything else is dark
+   * and this is the thing being shown. A latched solo off the card has always behaved
+   * that way, and a lock is the same state reached from a pad.
+   */
+  exclusiveLocked: boolean
+  /**
    * Blinder. While held, the group is driven to pulsing white regardless of the
-   * scene — including fixtures the scene never addresses. Momentary; nothing about
-   * the programming changes, so letting go restores it exactly.
+   * scene — including fixtures the scene never addresses. Momentary by default;
+   * nothing about the programming changes, so letting go restores it exactly. Can be
+   * locked on, same gesture as the strobe and the solo.
    */
   blinderActive: boolean
+  /**
+   * True only while a *press* is holding Blind down. The strobe's `strobeFlashHeld`
+   * in every respect; see it for why an on-screen click deliberately does not count.
+   */
+  blinderHeld: boolean
+  /**
+   * Keeps the blinder up after the pad is let go, until Release or the next light
+   * scene. Set by tapping Release while holding Blind, or the other way round.
+   *
+   * The loudest thing a lock can hold — a group pinned to pulsing white — so it is
+   * worth remembering that Release all drops it, and that a locked blinder keeps
+   * fading out over `blinderFadeBeats` when it finally does come down.
+   */
+  blinderLocked: boolean
+  /**
+   * True while this group's Release pad is down. Held, Release stops meaning release
+   * and becomes the lock modifier: whatever is pressed while it is down locks on.
+   */
+  releaseHeld: boolean
+  /**
+   * Whether the Release pad currently down has locked anything — either a pad pressed
+   * while it was held, or a pad already held when it was tapped.
+   *
+   * A release fires when the pad comes *up*, not when it goes down, so that reaching
+   * for Release first and a second pad after does not drop the locks the operator is
+   * in the middle of adding to. This flag is how the note-off tells a lock gesture
+   * from a plain tap.
+   */
+  releaseUsedForLock: boolean
   /**
    * Whether the master's *momentary* controls — strobe and blinder — reach this
    * group. The master dimmer is deliberately not gated: it is the rig's trim, so a
@@ -226,8 +300,16 @@ export function initGroupControl(): GroupControl {
     strobe: 0,
     strobeFlashLevel: DEFAULT_STROBE_FLASH_LEVEL,
     strobeFlashActive: false,
+    strobeFlashHeld: false,
+    strobeLocked: false,
     exclusiveEnabled: false,
+    exclusiveHeld: false,
+    exclusiveLocked: false,
     blinderActive: false,
+    blinderHeld: false,
+    blinderLocked: false,
+    releaseHeld: false,
+    releaseUsedForLock: false,
     followMasterHotkeys: true,
   }
 }
