@@ -13,7 +13,7 @@ import {
   setGroupBrightness,
   setGroupStrobe,
   setBlinderFadeBeats,
-  setGroupFollowMaster,
+  setGroupFollowMasterHotkeys,
   setMasterBrightness,
   toggleMasterBlinder,
   toggleMasterStrobe,
@@ -200,7 +200,7 @@ function MasterBar() {
   const master = useTypedSelector((state) => state.groupControl.master)
   const exemptGroupKey = useTypedSelector((state) =>
     Object.entries(state.groupControl.byGroup)
-      .filter(([, control]) => control?.followMaster === false)
+      .filter(([, control]) => control?.followMasterHotkeys === false)
       .map(([group]) => group)
       .sort()
       .join('\n')
@@ -220,7 +220,7 @@ function MasterBar() {
           action={{ type: 'setGroupMasterDimmer' }}
           style={{ width: '9rem', height: '1.4rem' }}
         >
-          <BriefTooltip title="Layered on top of each group's own dimmer — 50% here under a group at 50% gives 25%">
+          <BriefTooltip title="Trims the whole rig — layered on top of each group's own dimmer, so 50% here under a group at 50% gives 25%. Reaches every group, including any that ignore the master hotkeys.">
             <MasterTrack>
               <SliderBase
                 radius={0.42}
@@ -239,7 +239,7 @@ function MasterBar() {
       </MasterFaderCluster>
 
       <ButtonMidiOverlay action={{ type: 'setGroupMasterBlinder' }}>
-        <BriefTooltip title="Hold to blind every following group. Assign to a MIDI pad.">
+        <BriefTooltip title="Hold to blind every group that follows the master hotkeys. Assign to a MIDI pad.">
           <BlinderButton
             $active={master.blinderActive}
             size="small"
@@ -251,7 +251,7 @@ function MasterBar() {
       </ButtonMidiOverlay>
 
       <ButtonMidiOverlay action={{ type: 'setGroupMasterStrobe' }}>
-        <BriefTooltip title="Hold to fire the Flash on every following group, each at its own level. Assign to a MIDI pad.">
+        <BriefTooltip title="Hold to fire the Flash on every group that follows the master hotkeys, each at its own level. Assign to a MIDI pad.">
           <FlashButton
             $active={master.strobeActive}
             size="small"
@@ -263,8 +263,12 @@ function MasterBar() {
       </ButtonMidiOverlay>
 
       {exemptGroups.length > 0 ? (
-        <MasterExempt title={`Ignoring the master: ${exemptGroups.join(', ')}`}>
-          not following: {exemptGroups.join(', ')}
+        <MasterExempt
+          title={`Ignoring the master strobe and blinder (the dimmer still applies): ${exemptGroups.join(
+            ', '
+          )}`}
+        >
+          no hotkeys: {exemptGroups.join(', ')}
         </MasterExempt>
       ) : null}
     </MasterRoot>
@@ -300,20 +304,23 @@ function GroupCard({
         </FixtureCount>
       </CardHeader>
 
-      <BriefTooltip title="Whether the master dimmer, strobe and blinder reach this group">
+      <BriefTooltip title="Whether the master Blind and Strobe buttons reach this group. The master dimmer always applies.">
         <FollowMasterRow>
           <FollowMasterBox
             type="checkbox"
-            checked={control.followMaster !== false}
+            checked={control.followMasterHotkeys !== false}
             onChange={(event) =>
               dispatch(
-                setGroupFollowMaster({ group, follow: event.target.checked })
+                setGroupFollowMasterHotkeys({
+                  group,
+                  follow: event.target.checked,
+                })
               )
             }
-            aria-label={`${group} follows the master`}
+            aria-label={`${group} follows the master hotkeys`}
           />
-          <FollowMasterLabel $on={control.followMaster !== false}>
-            follow master
+          <FollowMasterLabel $on={control.followMasterHotkeys !== false}>
+            follow master hotkeys
           </FollowMasterLabel>
         </FollowMasterRow>
       </BriefTooltip>
@@ -557,6 +564,7 @@ const FollowMasterBox = styled.input`
 const FollowMasterLabel = styled.span<{ $on: boolean }>`
   font-size: 0.62rem;
   letter-spacing: 0.02rem;
+  white-space: nowrap;
   color: ${(p) => (p.$on ? p.theme.colors.text.secondary : '#ff8a4c')};
 `
 

@@ -147,23 +147,23 @@ export const groupControlSlice = createSlice({
     setBlinderFadeBeats: (state, { payload }: PayloadAction<number>) => {
       state.blinderFadeBeats = clampBlinderFadeBeats(payload)
     },
-    setGroupFollowMaster: (
+    setGroupFollowMasterHotkeys: (
       state,
       { payload }: PayloadAction<{ group: string; follow: boolean }>
     ) => {
-      controlFor(state, payload.group).followMaster = payload.follow === true
+      controlFor(state, payload.group).followMasterHotkeys = payload.follow === true
     },
     setMasterBrightness: (state, { payload }: PayloadAction<number>) => {
       state.master.brightness = clamp01(payload)
     },
-    /** Momentary: hold to strobe every following group. */
+    /** Momentary: hold to strobe every group that follows the master hotkeys. */
     setMasterStrobe: (state, { payload }: PayloadAction<boolean>) => {
       state.master.strobeActive = payload === true
     },
     toggleMasterStrobe: (state) => {
       state.master.strobeActive = !state.master.strobeActive
     },
-    /** Momentary: hold to blind every following group. */
+    /** Momentary: hold to blind every group that follows the master hotkeys. */
     setMasterBlinder: (state, { payload }: PayloadAction<boolean>) => {
       state.master.blinderActive = payload === true
     },
@@ -215,7 +215,7 @@ export const {
   releaseGroupStrobe,
   releaseAllGroupStrobes,
   releaseAllLiveOverrides,
-  setGroupFollowMaster,
+  setGroupFollowMasterHotkeys,
   setMasterBrightness,
   setMasterStrobe,
   toggleMasterStrobe,

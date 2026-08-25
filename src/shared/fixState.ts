@@ -1337,7 +1337,12 @@ export function fixGroupControlState(
       exclusiveEnabled: false,
       blinderActive: false,
       // Opt-out, so a group written before the master existed still follows it.
-      followMaster: control.followMaster !== false,
+      // `followMaster` was the spelling before the flag narrowed to the master's
+      // strobe and blinder — the dimmer now reaches everything — so read it as a
+      // fallback rather than silently re-arming a group the operator opted out.
+      followMasterHotkeys:
+        control.followMasterHotkeys !== false &&
+        (control as { followMaster?: unknown }).followMaster !== false,
     }
   }
 

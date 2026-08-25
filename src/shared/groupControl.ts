@@ -50,27 +50,31 @@ export interface GroupControl {
    */
   blinderActive: boolean
   /**
-   * Whether the master controls reach this group. Opt-out rather than opt-in, so a
-   * newly created group behaves like the rest of the rig; clear it for anything that
-   * must ignore the master dimmer, strobe and blinder (house lights, practicals).
+   * Whether the master's *momentary* controls — strobe and blinder — reach this
+   * group. The master dimmer is deliberately not gated: it is the rig's trim, so a
+   * fader move has to mean the same thing everywhere or the balance between groups
+   * changes depending on a checkbox. Opt-out rather than opt-in, so a newly created
+   * group behaves like the rest of the rig; clear it for anything that must never be
+   * strobed or blinded from the master (house lights, practicals).
    */
-  followMaster: boolean
+  followMasterHotkeys: boolean
 }
 
 /**
- * Controls that sit on top of every group that follows them.
+ * Controls that sit on top of the groups below them.
  *
  * The dimmer is a second multiplier rather than a replacement — group 50% under
  * master 50% gives 25% — so the master trims the rig without disturbing the balance
- * between groups.
+ * between groups. It reaches every group; only the momentary strobe and blinder
+ * honour `followMasterHotkeys`.
  */
 export interface GroupMasterControl {
-  /** 0..1, multiplied on top of each following group's own dimmer. */
+  /** 0..1, multiplied on top of every group's own dimmer. Reaches every group. */
   brightness: number
   /**
-   * Momentary: held while the master strobe button is down. Fires every following
-   * group's own flash rather than a level of its own, so each group strobes at the
-   * value dialled on its card.
+   * Momentary: held while the master strobe button is down. Fires the own flash of
+   * every group that follows the master hotkeys, rather than a level of its own, so
+   * each group strobes at the value dialled on its card.
    */
   strobeActive: boolean
   /** Momentary: held while the master blinder button is down. */
@@ -224,7 +228,7 @@ export function initGroupControl(): GroupControl {
     strobeFlashActive: false,
     exclusiveEnabled: false,
     blinderActive: false,
-    followMaster: true,
+    followMasterHotkeys: true,
   }
 }
 
@@ -279,13 +283,14 @@ function safeMaster(
 }
 
 /**
- * Fixtures the master must not touch.
+ * Fixtures the master strobe and blinder must not touch.
  *
  * Membership is resolved per physical fixture: opting a group out means those lights
- * ignore the master, even if they also sit in a group that follows it. The safer
- * reading — an explicit opt-out should not be undone by an unrelated membership.
+ * ignore the master hotkeys, even if they also sit in a group that follows them. The
+ * safer reading — an explicit opt-out should not be undone by an unrelated
+ * membership.
  */
-function masterExemptFixtures(
+function masterHotkeyExemptFixtures(
   universeFixtures: FlattenedFixture[],
   groupControl: GroupControlState | null | undefined
 ): Set<FlattenedFixture> {
@@ -294,7 +299,7 @@ function masterExemptFixtures(
   const exemptIds = new Set<string>()
 
   for (const group of Object.keys(byGroup)) {
-    if (byGroup[group]?.followMaster !== false) continue
+    if (byGroup[group]?.followMasterHotkeys !== false) continue
     for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
       exempt.add(fixture)
       const id = fixture.fixtureId?.trim()
@@ -312,12 +317,12 @@ function masterExemptFixtures(
   return exempt
 }
 
-/** Fixtures the master controls apply to. */
-function masterFixtures(
+/** Fixtures the master strobe and blinder apply to. */
+function masterHotkeyFixtures(
   universeFixtures: FlattenedFixture[],
   groupControl: GroupControlState | null | undefined
 ): FlattenedFixture[] {
-  const exempt = masterExemptFixtures(universeFixtures, groupControl)
+  const exempt = masterHotkeyExemptFixtures(universeFixtures, groupControl)
   if (exempt.size === 0) return universeFixtures
   return universeFixtures.filter((fixture) => !exempt.has(fixture))
 }
@@ -685,7 +690,7 @@ function applyBlinder(
     if (level <= 0) continue
     const targets =
       group === MASTER_BLINDER_KEY
-        ? masterFixtures(universeFixtures, groupControl)
+        ? masterHotkeyFixtures(universeFixtures, groupControl)
         : getFixturesInGroups(universeFixtures, { [group]: true })
     for (const fixture of targets) {
       const existing = levelByFixture.get(fixture)
@@ -726,11 +731,15 @@ function applyBlinder(
 }
 
 /**
- * Layer the master dimmer and strobe over the groups that follow them.
+ * Layer the master dimmer and strobe over the groups below them.
  *
  * The dimmer multiplies whatever the group faders already produced, so the two
  * compose: 50% under 50% is 25%. It runs after group brightness for exactly that
  * reason, and touches only master/dimmer channels, matching the group rule.
+ *
+ * The two halves cover different fixtures on purpose: the dimmer is the rig's trim
+ * and reaches everything, while the strobe is a momentary hotkey and honours
+ * `followMasterHotkeys`.
  */
 function applyMaster(
   channels: number[],
@@ -745,20 +754,24 @@ function applyMaster(
   const dimming = brightness < 1
   if (!strobing && !dimming) return
 
-  const following = masterFixtures(universeFixtures, groupControl)
-  const strobeLevels = strobing
-    ? masterStrobeLevelByFixture(following, groupControl)
-    : null
-
-  for (const fixture of following) {
-    const strobeValue = strobeLevels?.get(fixture)
-    for (const [channelIdx, channel] of fixture.channels) {
-      if (dimming) {
+  if (dimming) {
+    for (const fixture of universeFixtures) {
+      for (const [channelIdx, channel] of fixture.channels) {
         applyBrightnessToChannel(channels, channelIdx, channel, brightness)
       }
-      if (strobeValue !== undefined) {
-        applyStrobeToChannel(channels, channelIdx, channel, strobeValue)
-      }
+    }
+  }
+
+  if (!strobing) return
+
+  const following = masterHotkeyFixtures(universeFixtures, groupControl)
+  const strobeLevels = masterStrobeLevelByFixture(following, groupControl)
+
+  for (const fixture of following) {
+    const strobeValue = strobeLevels.get(fixture)
+    if (strobeValue === undefined) continue
+    for (const [channelIdx, channel] of fixture.channels) {
+      applyStrobeToChannel(channels, channelIdx, channel, strobeValue)
     }
   }
 }
@@ -782,7 +795,7 @@ function masterStrobeLevelByFixture(
   for (const group of Object.keys(byGroup)) {
     const control = byGroup[group]
     if (control === null || control === undefined) continue
-    if (control.followMaster === false) continue
+    if (control.followMasterHotkeys === false) continue
     const level = clampGroupStrobeValue(control.strobeFlashLevel)
     for (const fixture of getFixturesInGroups(followingFixtures, { [group]: true })) {
       if (!following.has(fixture)) continue
