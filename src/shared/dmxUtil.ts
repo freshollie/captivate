@@ -1192,11 +1192,27 @@ export function getMovingWindow(
   return movingWindow
 }
 
-export function getFixturesInGroups(
-  fixtures: FlattenedFixture[],
-  scene_groups: { [key: string]: boolean | undefined }
-) {
-  function fixtureMatchesGroup(fixture: FlattenedFixture, group: string) {
+/**
+ * Groups a fixture cannot be assigned to — membership is decided by what the fixture
+ * *is* rather than by its own group list.
+ *
+ * Exported alongside `fixtureMatchesGroup` because anything resolving membership from
+ * `fixture.groups` directly has to know which names that list cannot answer for.
+ */
+export const VIRTUAL_FIXTURE_GROUPS: ReadonlySet<string> = new Set([
+  'Visualizer',
+  'Atmosphere',
+  'Movers',
+])
+
+export function isVirtualFixtureGroup(group: string): boolean {
+  return VIRTUAL_FIXTURE_GROUPS.has(group)
+}
+
+export function fixtureMatchesGroup(
+  fixture: FlattenedFixture,
+  group: string
+): boolean {
     if (group === 'Visualizer') {
       // Visualizer is a virtual group with no physical DMX fixtures.
       return false
@@ -1253,8 +1269,12 @@ export function getFixturesInGroups(
       })
     }
     return fixture.groups.includes(group)
-  }
+}
 
+export function getFixturesInGroups(
+  fixtures: FlattenedFixture[],
+  scene_groups: { [key: string]: boolean | undefined }
+) {
   return fixtures.filter((fixture) =>
     evaluateSceneGroups(scene_groups, (group) =>
       fixtureMatchesGroup(fixture, group)

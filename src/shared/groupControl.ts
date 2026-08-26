@@ -1,6 +1,11 @@
 import type { FixtureChannel, FlattenedFixture } from './dmxFixtures'
 import { DMX_MAX_VALUE, DMX_MIN_VALUE } from './dmxFixtures'
-import { getFixturesInGroups, listColorMapSlots } from './dmxUtil'
+import {
+  fixtureMatchesGroup,
+  getFixturesInGroups,
+  isVirtualFixtureGroup,
+  listColorMapSlots,
+} from './dmxUtil'
 import { inferColorKind } from './dmxColors'
 
 /**
@@ -380,9 +385,13 @@ function masterHotkeyExemptFixtures(
   const exempt = new Set<FlattenedFixture>()
   const exemptIds = new Set<string>()
 
-  for (const group of Object.keys(byGroup)) {
-    if (byGroup[group]?.followMasterHotkeys !== false) continue
-    for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
+  const exemptGroups = Object.keys(byGroup).filter(
+    (group) => byGroup[group]?.followMasterHotkeys === false
+  )
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, exemptGroups)
+
+  for (const group of exemptGroups) {
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
       exempt.add(fixture)
       const id = fixture.fixtureId?.trim()
       if (id !== undefined && id.length > 0) exemptIds.add(id)
@@ -486,6 +495,51 @@ interface ResolvedOverride {
 }
 
 /**
+ * Which fixtures sit in each of the named groups, resolved in one pass over the rig.
+ *
+ * The obvious shape — ask `getFixturesInGroups` once per group — walks every fixture
+ * for every group, and `evaluateSceneGroups` allocates three arrays for each fixture
+ * it tests. That is O(groups x fixtures) with an allocation per test, on every DMX
+ * frame of every universe, which is why adding groups to a show made the engine
+ * steadily slower rather than costing a flat amount. Reading each fixture's own group
+ * list instead makes it one pass.
+ *
+ * Virtual groups keep the predicate: a fixture is in `Movers` or `Atmosphere` by what
+ * channels it has, not by its group list, and there are only ever a few of them.
+ */
+function fixturesByGroupName(
+  fixtures: FlattenedFixture[],
+  groups: string[]
+): Map<string, FlattenedFixture[]> {
+  const byGroup = new Map<string, FlattenedFixture[]>()
+  if (groups.length === 0) return byGroup
+
+  const named = new Set<string>()
+  const virtual: string[] = []
+  for (const group of groups) {
+    byGroup.set(group, [])
+    if (isVirtualFixtureGroup(group)) virtual.push(group)
+    else named.add(group)
+  }
+
+  for (const fixture of fixtures) {
+    if (named.size > 0) {
+      for (const group of fixture.groups) {
+        // `named` excludes the virtual names, so a fixture can never be added twice
+        // — matching `fixtureMatchesGroup`, which ignores the fixture's own list for
+        // those.
+        if (named.has(group)) byGroup.get(group)?.push(fixture)
+      }
+    }
+    for (const group of virtual) {
+      if (fixtureMatchesGroup(fixture, group)) byGroup.get(group)?.push(fixture)
+    }
+  }
+
+  return byGroup
+}
+
+/**
  * Merge every armed group a fixture belongs to into one override per partition.
  *
  * Overlapping groups resolve highest-takes-precedence, the way submasters do on a
@@ -494,16 +548,19 @@ interface ResolvedOverride {
  */
 function resolveOverrides(
   fixtures: FlattenedFixture[],
-  groupControl: GroupControlState | null | undefined
+  groupControl: GroupControlState | null | undefined,
+  /** Armed groups, already worked out by the caller's early-out check. */
+  activeGroups: string[]
 ): Map<FlattenedFixture, ResolvedOverride> {
   const resolved = new Map<FlattenedFixture, ResolvedOverride>()
   const byGroup = safeByGroup(groupControl)
+  const fixturesInGroup = fixturesByGroupName(fixtures, activeGroups)
 
-  for (const group of activeGroupControlNames(groupControl)) {
+  for (const group of activeGroups) {
     const control = byGroup[group]
     if (control === null || control === undefined) continue
 
-    for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
       const current = resolved.get(fixture) ?? {}
       // A group forcing full still has to contribute, not just skip: a fixture it
       // shares with a dimmed group has to come up to full, and HTP only sees values
@@ -690,8 +747,9 @@ function applyExclusiveBlackout(
 
   const keptPartitions = new Set<FlattenedFixture>()
   const keptFixtureIds = new Set<string>()
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, soloGroups)
   for (const group of soloGroups) {
-    for (const fixture of getFixturesInGroups(universeFixtures, { [group]: true })) {
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
       keptPartitions.add(fixture)
       const id = fixture.fixtureId?.trim()
       if (id !== undefined && id.length > 0) {
@@ -767,13 +825,17 @@ function applyBlinder(
 
   // A fixture blinding from two sources takes the brighter of the two.
   const levelByFixture = new Map<FlattenedFixture, number>()
+  const fixturesInGroup = fixturesByGroupName(
+    universeFixtures,
+    groups.filter((group) => group !== MASTER_BLINDER_KEY)
+  )
   for (const group of groups) {
     const level = clamp01(blinderLevels[group] ?? 0)
     if (level <= 0) continue
     const targets =
       group === MASTER_BLINDER_KEY
         ? masterHotkeyFixtures(universeFixtures, groupControl)
-        : getFixturesInGroups(universeFixtures, { [group]: true })
+        : fixturesInGroup.get(group) ?? []
     for (const fixture of targets) {
       const existing = levelByFixture.get(fixture)
       if (existing === undefined || level > existing) {
@@ -871,16 +933,18 @@ function masterStrobeLevelByFixture(
   groupControl: GroupControlState | null | undefined
 ): Map<FlattenedFixture, number> {
   const byGroup = safeByGroup(groupControl)
-  const following = new Set(followingFixtures)
   const levels = new Map<FlattenedFixture, number>()
 
-  for (const group of Object.keys(byGroup)) {
+  const groups = Object.keys(byGroup).filter(
+    (group) => byGroup[group]?.followMasterHotkeys !== false
+  )
+  const fixturesInGroup = fixturesByGroupName(followingFixtures, groups)
+
+  for (const group of groups) {
     const control = byGroup[group]
     if (control === null || control === undefined) continue
-    if (control.followMasterHotkeys === false) continue
     const level = clampGroupStrobeValue(control.strobeFlashLevel)
-    for (const fixture of getFixturesInGroups(followingFixtures, { [group]: true })) {
-      if (!following.has(fixture)) continue
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
       const existing = levels.get(fixture)
       if (existing === undefined || level > existing) levels.set(fixture, level)
     }
@@ -914,15 +978,12 @@ export function applyGroupControlsToUniverse(
   // A blinder mid-fade keeps rendering after its button is up, and the master acts
   // on groups that may have no entry at all, so the early-out cannot rely on the
   // armed-control list alone.
-  if (
-    !hasBlinder &&
-    !hasMaster &&
-    activeGroupControlNames(groupControl).length === 0
-  ) {
+  const activeGroups = activeGroupControlNames(groupControl)
+  if (!hasBlinder && !hasMaster && activeGroups.length === 0) {
     return
   }
 
-  const resolved = resolveOverrides(universeFixtures, groupControl)
+  const resolved = resolveOverrides(universeFixtures, groupControl, activeGroups)
 
   for (const [fixture, override] of resolved) {
     for (const [channelIdx, channel] of fixture.channels) {

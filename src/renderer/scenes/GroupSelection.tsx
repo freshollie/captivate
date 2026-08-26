@@ -2,7 +2,7 @@ import IconButton from '@mui/material/IconButton'
 import EditIcon from '@mui/icons-material/Edit'
 import RemoveIcon from '@mui/icons-material/Remove'
 import TuneIcon from '@mui/icons-material/Tune'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   useActiveLightScene,
   useDmxSelector,
@@ -27,31 +27,45 @@ interface Props {
   splitIndex: number
 }
 
+/**
+ * Shared empty selection for a split that does not exist yet.
+ *
+ * Must be a stable reference: `?? {}` inside a selector hands react-redux a new object
+ * every time it runs — which is on every dispatched action — so the component would
+ * re-render for actions it has nothing to do with, and redo the rig scan below each
+ * time.
+ */
+const NO_GROUPS: { [key: string]: boolean | undefined } = Object.freeze({})
+
 export default function GroupSelection({ splitIndex }: Props) {
   const dispatch = useDispatch()
   const [isOpen, setIsOpen] = useState(false)
   const [modShapingOpen, setModShapingOpen] = useState(false)
   const videoEnabled = useTypedSelector((state) => state.gui.videoEnabled)
   const showVisualizerGroup = showVisGroupUi(videoEnabled)
-  const dmx = useDmxSelector((dmx) => dmx)
-  const hasMoverFixtures = universeHasMovers(
-    dmx.universe,
-    dmx.fixtureTypesByID
+  const universe = useDmxSelector((dmx) => dmx.universe)
+  const fixtureTypesByID = useDmxSelector((dmx) => dmx.fixtureTypesByID)
+  const ledFixtures = useDmxSelector((dmx) => dmx.led.ledFixtures)
+  // Three full passes over the rig, and the group scan grows with the number of
+  // groups in the show — 0.05ms at four groups, 0.8ms at forty-eight. Cheap once per
+  // patch change, ruinous if it runs on every render, so it is keyed to the rig
+  // rather than left in the render body.
+  const rig = useMemo(
+    () => ({
+      hasMoverFixtures: universeHasMovers(universe, fixtureTypesByID),
+      hasAtmosphericsInUniverse: universeHasAtmospherics(universe, fixtureTypesByID),
+      placedGroups: getSortedGroupsFromPlacedFixtures(universe, fixtureTypesByID),
+      ledGroups: ledFixtures
+        .flatMap((fixture) => fixture.groups)
+        .map((group) => group.trim())
+        .filter((group) => group.length > 0),
+    }),
+    [universe, fixtureTypesByID, ledFixtures]
   )
-  let availableGroups = getSortedGroupsFromPlacedFixtures(
-    dmx.universe,
-    dmx.fixtureTypesByID
-  )
-  const hasAtmosphericsInUniverse = universeHasAtmospherics(
-    dmx.universe,
-    dmx.fixtureTypesByID
-  )
-  const ledGroups = dmx.led.ledFixtures
-    .flatMap((fixture) => fixture.groups)
-    .map((group) => group.trim())
-    .filter((group) => group.length > 0)
+  const { hasMoverFixtures, hasAtmosphericsInUniverse, ledGroups } = rig
+  let availableGroups = rig.placedGroups
   const activeGroups = useActiveLightScene(
-    (scene) => scene.splitScenes[splitIndex]?.groups ?? {}
+    (scene) => scene.splitScenes[splitIndex]?.groups ?? NO_GROUPS
   )
   const hasSplitModShaping = useActiveLightScene(
     (scene) => scene.splitScenes[splitIndex]?.splitModShaping !== undefined
@@ -87,7 +101,7 @@ export default function GroupSelection({ splitIndex }: Props) {
     )
     .sort((a, b) => (a > b ? 1 : -1))
 
-  const universeFixtureCount = dmx.universe.length
+  const universeFixtureCount = universe.length
   const noGroupsAvailable = availableGroups.length === 0
 
   const splitHeading = splitDisplayName(splitIndex, activeGroups)
