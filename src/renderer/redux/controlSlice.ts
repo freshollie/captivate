@@ -12,6 +12,7 @@ import {
   type ModManualAnchor,
   type SplitModShaping,
   normSplitShapingForStore,
+  sanitizeSplitModulationForPaste,
 } from '../../shared/modulation'
 import { nanoid } from 'nanoid'
 import { RandomizerOptions } from '../../shared/randomizer'
@@ -36,6 +37,7 @@ import {
   VisualScenes_t,
   SceneType,
   initSplitScene,
+  cloneSplitScene,
   VisualSceneTransitionConfig,
 } from '../../shared/Scenes'
 import { reorderArray } from '../../shared/util'
@@ -74,6 +76,14 @@ interface SetModManualAnchorPayload {
   param: DefaultParam | string
   /** Omit or `'center'` clears stored anchor (default center behavior). */
   anchor?: ModManualAnchor
+}
+
+interface PasteSplitScenePayload {
+  splitScene: SplitScene_t
+  /** Source scene's modulation column, mapped onto this scene's modulators by index. */
+  splitModulations: Array<{ [key: string]: number | undefined }>
+  /** Overwrite this split instead of appending a new one at the end. */
+  targetIndex?: number
 }
 
 interface SetSplitModShapingPayload {
@@ -737,6 +747,39 @@ const scenesSlice = createSlice({
         })
       })
     },
+    /**
+     * Drops a copied split (see `gui.splitClipboard`) into the active scene.
+     *
+     * Modulators are per-scene, so only the amounts aimed at LFOs this scene
+     * actually has can come across; the rest are dropped, and the UI warns with
+     * the count from `countUnmappableSplitModulations`.
+     */
+    pasteSplitScene: (
+      state,
+      { payload }: PayloadAction<PasteSplitScenePayload>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const overwriting =
+          payload.targetIndex !== undefined &&
+          getSplitSceneSafe(scene, payload.targetIndex) !== undefined
+        const splitIndex = overwriting
+          ? (payload.targetIndex as number)
+          : scene.splitScenes.length
+        const pasted = cloneSplitScene(payload.splitScene)
+        if (overwriting) {
+          scene.splitScenes[splitIndex] = pasted
+        } else {
+          scene.splitScenes.push(pasted)
+        }
+        scene.modulators.forEach((modulator, modIndex) => {
+          while (modulator.splitModulations.length <= splitIndex) {
+            modulator.splitModulations.push({})
+          }
+          modulator.splitModulations[splitIndex] =
+            sanitizeSplitModulationForPaste(payload.splitModulations?.[modIndex])
+        })
+      })
+    },
     ensureSplitSceneForGroup: (
       state,
       {
@@ -1103,6 +1146,7 @@ export const {
   resetModulator,
   setRandomizer,
   addSplitScene,
+  pasteSplitScene,
   ensureSplitSceneForGroup,
   removeSplitSceneByIndex,
   removeDedicatedSplitSceneForGroup,

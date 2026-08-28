@@ -110,6 +110,12 @@ export function SplitScenesHelpButton() {
           the × on the header (the first section cannot be removed).
         </li>
         <li>
+          Copy a section with the copy icon on its header, then switch scene and
+          click <strong>Paste Split</strong> to drop it in. Sliders, groups and
+          effect strengths come across; strengths aimed at motion effects the
+          new scene does not have are dropped.
+        </li>
+        <li>
           Use <strong>Add Params</strong> to show more sliders (color, movers,
           strobes, and more).
         </li>
@@ -126,7 +132,8 @@ export function SplitGroupsHelpButton() {
   return (
     <FieldHelpButton ariaLabel="How groups on a section work">
       Click the pencil to choose which fixture groups this section uses. Each
-      group toggles: on → excluded → off. The tune icon opens extra options for
+      group toggles: on → excluded → off. The copy icon copies this section so
+      you can paste it into another scene. The tune icon opens extra options for
       that section (flip the wave, shift timing, stepped motion).
     </FieldHelpButton>
   )

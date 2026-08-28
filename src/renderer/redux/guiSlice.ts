@@ -2,6 +2,7 @@ import type { Page } from '../../shared/pages'
 import type { LaserTool } from '../laser/laserEditorTypes'
 import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 import { SaveInfo } from '../../shared/save'
+import type { SplitSceneClipboard } from '../../shared/Scenes'
 import {
   MidiConnections,
   DmxConnectionInfo,
@@ -103,6 +104,11 @@ export interface GuiState {
   atmosManualTriggerNonceByFixtureId: { [fixtureId: string]: number | undefined }
   /** Laser editor (detached window) applies tool when this nonce bumps. */
   laserToolMidiRequest: { tool: LaserTool; nonce: number } | null
+  /**
+   * Split copied from a scene, awaiting paste into another. Window-local and
+   * never persisted: it is stripped on save and on state sync between windows.
+   */
+  splitClipboard: SplitSceneClipboard | null
 }
 
 export function initGuiState(): GuiState {
@@ -142,6 +148,7 @@ export function initGuiState(): GuiState {
     appSettings: { ...DEFAULT_APP_SETTINGS },
     atmosManualTriggerNonceByFixtureId: {},
     laserToolMidiRequest: null,
+    splitClipboard: null,
   }
 }
 
@@ -402,6 +409,12 @@ const guiSlice = createSlice({
         nonce: (state.laserToolMidiRequest?.nonce ?? 0) + 1,
       }
     },
+    setSplitClipboard: (
+      state,
+      { payload }: PayloadAction<SplitSceneClipboard | null>
+    ) => {
+      state.splitClipboard = payload
+    },
   },
 })
 
@@ -450,6 +463,7 @@ export const {
   fireAtmosManualTrigger,
   clearAtmosManualTriggers,
   setLaserToolFromMidiMapping,
+  setSplitClipboard,
 } = guiSlice.actions
 
 export default guiSlice.reducer

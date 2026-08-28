@@ -6,9 +6,11 @@ import { Provider } from 'react-redux'
 import {
   store,
   getCleanReduxState,
+  getCleanReduxStateSliceRefs,
   resetState,
   resetRemoteState,
   type CleanReduxState,
+  type CleanReduxStateSliceRefs,
 } from './redux/store'
 import {
   setDmx,
@@ -40,12 +42,14 @@ import {
   requestWindowClose,
   send_dispatch_to_main,
   send_control_state,
+  send_group_control_update,
   send_sync_led_sidebar_menu,
   send_sync_autosave_menu,
   send_open_page_window,
 } from './ipcHandler'
 import { registerHostTransport } from '../shared/hostTransport'
 import ipc_channels from '../shared/ipc_channels'
+import { replaceGroupControlState } from './redux/groupControlSlice'
 import { lighting3dPreviewRuntimeManager } from './lighting3d/Lighting3dPreviewRuntimeManager'
 import {
   fetchAppSettings,
@@ -124,6 +128,13 @@ const isDetachedPageWindow = pageFromLocation !== null
 const isPrimaryWindow = pageFromLocation === null
 let _canPublishControlState = !isDetachedPageWindow
 let _lastPublishedControlStateSerialized: string | null = null
+/**
+ * Slices as they stood at the last publish.
+ *
+ * Only used to answer one question: did *nothing but* the group controls move? If so
+ * the publish can carry that slice alone instead of the whole project.
+ */
+let _lastPublishedSliceRefs: CleanReduxStateSliceRefs | null = null
 let _lastReceivedControlStateSerialized: string | null = null
 /** Detached windows: coalesce rapid full-state IPC to one Redux replace per frame. */
 let _pendingRemoteCleanState: CleanReduxState | null = null
@@ -224,11 +235,6 @@ function controlPublishAffectsLiveDmx(actionType: string | null): boolean {
     return false
   }
   if (actionType.startsWith('control/')) {
-    return true
-  }
-  // Group faders are live overrides on the way to the wire — debouncing them would
-  // make the page feel laggy against the lights.
-  if (actionType.startsWith('groupControl/')) {
     return true
   }
   return IMMEDIATE_DMX_PUBLISH_ACTION_TYPES.has(actionType)
@@ -633,7 +639,26 @@ ipc_setup({
       _lastPublishedControlStateSerialized = JSON.stringify(
         getCleanReduxState(store.getState())
       )
+      _lastPublishedSliceRefs = getCleanReduxStateSliceRefs(store.getState())
     }
+  },
+  on_group_control_update: (groupControl) => {
+    if (pageFromLocation === 'Lighting3D' || isPrimaryWindow) {
+      // The main window owns project state and is the one sending these.
+      return
+    }
+    _isApplyingRemoteState = true
+    try {
+      store.dispatch(replaceGroupControlState(groupControl))
+    } finally {
+      _isApplyingRemoteState = false
+    }
+  },
+  on_control_state_request: () => {
+    // Forgetting what the host holds is what makes the next publish a full one.
+    _lastPublishedSliceRefs = null
+    _lastPublishedControlStateSerialized = null
+    publishControlStateIfChanged()
   },
   ...(pageFromLocation === 'Lighting3D'
     ? {
@@ -867,8 +892,10 @@ if (document.visibilityState === 'visible') {
 }
 
 if (_canPublishControlState) {
-  const cleanState = getCleanReduxState(store.getState())
+  const reduxState = store.getState()
+  const cleanState = getCleanReduxState(reduxState)
   _lastPublishedControlStateSerialized = JSON.stringify(cleanState)
+  _lastPublishedSliceRefs = getCleanReduxStateSliceRefs(reduxState)
   send_control_state(cleanState)
 }
 if (isPrimaryWindow) {
@@ -923,32 +950,13 @@ let _controlStatePublishDebounceTimer: ReturnType<typeof setTimeout> | null =
   null
 const CONTROL_STATE_PUBLISH_DEBOUNCE_MS = 64
 
-/**
- * Floor on how often live-DMX state is published to the engine.
- *
- * Every publish serializes the whole control state — around 1ms on a real show file
- * — and then ships it over IPC, which clones it again. Live actions deliberately
- * skip the debounce so faders track the lights, but left unbounded a handful of MIDI
- * faders moving together produce hundreds of publishes a second and spend most of a
- * core on JSON. The engine renders at 90fps and outputs DMX slower still, so
- * clamping to 60Hz costs nothing visible.
- *
- * A trailing publish is always scheduled, so the last position of a fader lands even
- * if it arrives inside the window.
- */
-const LIVE_PUBLISH_MIN_INTERVAL_MS = 1000 / 60
 let _lastControlStatePublishAtMs = 0
-let _livePublishTimer: ReturnType<typeof setTimeout> | null = null
 
 function publishControlStateIfChanged() {
   _pendingControlStatePublishRaf = null
   if (_controlStatePublishDebounceTimer !== null) {
     clearTimeout(_controlStatePublishDebounceTimer)
     _controlStatePublishDebounceTimer = null
-  }
-  if (_livePublishTimer !== null) {
-    clearTimeout(_livePublishTimer)
-    _livePublishTimer = null
   }
   if (_isApplyingRemoteState || !_canPublishControlState) {
     return
@@ -964,6 +972,13 @@ function publishControlStateIfChanged() {
 }
 
 function scheduleControlStatePublish() {
+  // immediately send group control, since the data is very small and it
+  // doesn't need to be sent with the whole state update
+  if (_lastDispatchActionType?.startsWith("groupControl/")) {
+    send_group_control_update(store.getState().groupControl);
+    return;
+  }
+
   const immediate = controlPublishAffectsLiveDmx(_lastDispatchActionType)
   if (_controlStatePublishDebounceTimer !== null) {
     clearTimeout(_controlStatePublishDebounceTimer)
@@ -971,25 +986,13 @@ function scheduleControlStatePublish() {
   }
 
   if (immediate) {
-    // Already waiting on the rate-limit boundary; that publish will carry this.
-    if (_livePublishTimer !== null) {
-      return
+    if (!_immediateControlStatePublishQueued) {
+      _immediateControlStatePublishQueued = true
+      queueMicrotask(() => {
+        _immediateControlStatePublishQueued = false
+        publishControlStateIfChanged()
+      })
     }
-    const sinceLastMs = performance.now() - _lastControlStatePublishAtMs
-    if (sinceLastMs >= LIVE_PUBLISH_MIN_INTERVAL_MS) {
-      if (!_immediateControlStatePublishQueued) {
-        _immediateControlStatePublishQueued = true
-        queueMicrotask(() => {
-          _immediateControlStatePublishQueued = false
-          publishControlStateIfChanged()
-        })
-      }
-      return
-    }
-    _livePublishTimer = setTimeout(
-      publishControlStateIfChanged,
-      LIVE_PUBLISH_MIN_INTERVAL_MS - sinceLastMs
-    )
     return
   }
 

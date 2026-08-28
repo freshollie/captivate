@@ -10,6 +10,7 @@ import {
 import { buildLighting3dRealtimeTick } from './buildLighting3dRealtimeTick'
 import ipcChannelsVisualizer from '../../visualizer/ipcChannels'
 import { CleanReduxState } from '../../renderer/redux/store'
+import type { GroupControlState } from '../../shared/groupControl'
 import { RealtimeState } from '../../renderer/redux/realtimeStore'
 import * as midiConnection from './midiConnection'
 import { PayloadAction } from '@reduxjs/toolkit'
@@ -114,6 +115,15 @@ interface Config {
     new_state: CleanReduxState,
     sender: WebContents
   ) => void
+  /**
+   * The group-control slice on its own. Returns the state the engine now holds after
+   * merging it, or null if there is nothing to merge into yet — the engine owns the
+   * full state, so it does the merge.
+   */
+  on_group_control_update: (
+    groupControl: GroupControlState,
+    sender: WebContents
+  ) => CleanReduxState | null
   /** Optional: re-sync renderer `videoEnabled` with detached visualizer windows (e.g. after project load). */
   on_reconcile_video_enabled?: () => void
   on_user_command: (command: UserCommand) => void
@@ -811,7 +821,8 @@ function broadcastExcept(channel: string, payload: any, sender: WebContents) {
   _config.renderers.forEach((renderer) => {
     if (!renderer.isDestroyed() && renderer.id !== sender.id) {
       if (
-        channel === ipcChannels.new_control_state &&
+        (channel === ipcChannels.new_control_state ||
+          channel === ipcChannels.group_control_update) &&
         lighting3dPreviewTargets.has(renderer)
       ) {
         return
@@ -834,6 +845,28 @@ export function ipcSetup(config: Config) {
       broadcastExcept(ipcChannels.new_control_state, new_state, e.sender)
       notifyRemoteControlState(new_state)
       scheduleLighting3dBootstrapFromControlState(new_state)
+    }
+  )
+
+  ipcMain.on(
+    ipcChannels.group_control_update,
+    (e, groupControl: GroupControlState) => {
+      telemetryCounter('ipc', 'group_control_update')
+      addRenderer(e.sender)
+      const merged = _config.on_group_control_update(groupControl, e.sender)
+      if (merged === null) {
+        // No state to merge into — the engine has none yet, or lost it to a restart.
+        // A slice cannot rebuild it, so ask for the whole thing.
+        if (!e.sender.isDestroyed()) {
+          e.sender.send(ipcChannels.request_control_state)
+        }
+        return
+      }
+      // Mirror windows apply the slice directly; the consumers that need a whole
+      // state get the engine's, which costs nothing to pass along.
+      broadcastExcept(ipcChannels.group_control_update, groupControl, e.sender)
+      notifyRemoteControlState(merged)
+      scheduleLighting3dBootstrapFromControlState(merged)
     }
   )
 

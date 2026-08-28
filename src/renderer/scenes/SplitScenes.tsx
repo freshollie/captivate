@@ -17,8 +17,11 @@ import { indexArray } from 'shared/util'
 import styled from 'styled-components'
 import GroupSelection from './GroupSelection'
 import AddIcon from '@mui/icons-material/Add'
+import PasteIcon from '@mui/icons-material/ContentPaste'
 import { useDispatch } from 'react-redux'
-import { addSplitScene } from 'renderer/redux/controlSlice'
+import { addSplitScene, pasteSplitScene } from 'renderer/redux/controlSlice'
+import { pushStatusMessage } from 'renderer/redux/guiSlice'
+import { countUnmappableSplitModulations } from 'shared/modulation'
 import { SplitScenesHelpButton } from './sceneHelpButtons'
 
 export default function SplitScenes({
@@ -33,10 +36,44 @@ export default function SplitScenes({
   const splitSceneCount = useActiveLightScene(
     (scene) => scene.splitScenes.length
   )
+  const modulatorCount = useActiveLightScene((scene) => scene.modulators.length)
+  const clipboard = useTypedSelector((state) => state.gui.splitClipboard)
 
   const indexes = indexArray(splitSceneCount)
 
   const onAddSplitScene = () => dispatch(addSplitScene())
+
+  const onPasteSplitScene = () => {
+    if (clipboard === null || clipboard === undefined) {
+      return
+    }
+    // Modulator counts differ between scenes, so say what did not survive the
+    // paste rather than letting the split quietly move less than it used to.
+    const dropped = countUnmappableSplitModulations(
+      clipboard.splitModulations,
+      modulatorCount
+    )
+    dispatch(
+      pasteSplitScene({
+        splitScene: clipboard.splitScene,
+        splitModulations: clipboard.splitModulations,
+      })
+    )
+    dispatch(
+      pushStatusMessage({
+        level: dropped > 0 ? 'warn' : 'info',
+        message:
+          dropped > 0
+            ? `Pasted ${clipboard.sourceSplitLabel} from "${clipboard.sourceSceneName}" — dropped ${dropped} modulation ${
+                dropped === 1 ? 'column' : 'columns'
+              }: this scene has ${modulatorCount} LFO${
+                modulatorCount === 1 ? '' : 's'
+              }, the copy used ${clipboard.splitModulations.length}`
+            : `Pasted ${clipboard.sourceSplitLabel} from "${clipboard.sourceSceneName}"`,
+        source: 'Splits',
+      })
+    )
+  }
 
   return (
     <Root $flatten={flattenScroll}>
@@ -54,14 +91,26 @@ export default function SplitScenes({
         )}
         <AddSplitFooter>
           <AddSplitDivider />
-          <AddSplitButton
-            type="button"
-            onClick={onAddSplitScene}
-            title="Add another section for a different group of lights"
-          >
-            <AddIcon fontSize="small" />
-            <span>Add Split</span>
-          </AddSplitButton>
+          <AddSplitActions>
+            <AddSplitButton
+              type="button"
+              onClick={onAddSplitScene}
+              title="Add another section for a different group of lights"
+            >
+              <AddIcon fontSize="small" />
+              <span>Add Split</span>
+            </AddSplitButton>
+            {clipboard ? (
+              <AddSplitButton
+                type="button"
+                onClick={onPasteSplitScene}
+                title={`Paste ${clipboard.sourceSplitLabel} copied from "${clipboard.sourceSceneName}" as a new split here`}
+              >
+                <PasteIcon fontSize="small" />
+                <span>Paste Split</span>
+              </AddSplitButton>
+            ) : null}
+          </AddSplitActions>
         </AddSplitFooter>
       </SplitList>
     </Root>
@@ -156,6 +205,14 @@ const AddSplitButton = styled.button`
   &:active {
     transform: translateY(1px);
   }
+`
+
+const AddSplitActions = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-width: 0;
 `
 
 const AddSplitFooter = styled.div`

@@ -99,30 +99,71 @@ export function getAutoSceneTargetEnergy(
 
 export const EPICNESS_LEVEL_MIN = 1
 export const EPICNESS_LEVEL_MAX = 11
+export const EPICNESS_LEVEL_COUNT = EPICNESS_LEVEL_MAX - EPICNESS_LEVEL_MIN + 1
 
 /**
- * How far either side of the chosen level a scene can sit and still count.
+ * The scenes each epicness level owns, quietest level first.
  *
- * Expressed in levels, so it does not have to be restated if the scale changes. A
- * window rather than an exact match is what makes the button useful: it gives the
- * picker several scenes to alternate between at a given intensity.
+ * Split by *count*, not by epicness value: scenes are ranked by epicness and cut into
+ * equal-sized groups, so every scene belongs to exactly one level and each level holds
+ * roughly `scenes / 11` of them. A fixed epicness window per level instead leaves the
+ * levels lopsided wherever the values clump - which they do, since the generator ladder
+ * is dense at the top and hand-set values gather around the round numbers - so a
+ * crowded window hoards scenes while a sparse one has almost nothing to offer.
+ *
+ * With fewer scenes than levels there is nothing to split, so several levels share the
+ * nearest-ranked scene and every button still does something.
  */
-export const EPICNESS_LEVEL_TOLERANCE = 0.5
+export function epicnessLevelSceneBuckets(light: LightScenes_t): string[][] {
+  const ranked = light.ids
+    .filter((id) => light.byId[id] !== undefined && light.byId[id].autoEnabled)
+    .map((id, order) => ({
+      id,
+      order,
+      epicness: clamp01(light.byId[id]?.epicness ?? 0),
+    }))
+    // Ties keep scene order, so the buckets are stable between presses.
+    .sort((a, b) => a.epicness - b.epicness || a.order - b.order)
+    .map((entry) => entry.id)
 
-/** Level 1..11 as the 0..1 epicness scenes are stored in. */
-export function epicnessLevelToEnergy(level: number): number {
+  const count = ranked.length
+  const buckets: string[][] = []
+
+  for (let level = 0; level < EPICNESS_LEVEL_COUNT; level++) {
+    const start = Math.floor((level * count) / EPICNESS_LEVEL_COUNT)
+    const end = Math.floor(((level + 1) * count) / EPICNESS_LEVEL_COUNT)
+    if (end > start) {
+      buckets.push(ranked.slice(start, end))
+      continue
+    }
+    if (count === 0) {
+      buckets.push([])
+      continue
+    }
+    const nearest = Math.min(
+      count - 1,
+      Math.floor(((level + 0.5) * count) / EPICNESS_LEVEL_COUNT)
+    )
+    buckets.push([ranked[nearest]!])
+  }
+
+  return buckets
+}
+
+/** Level 1..11 as an index into {@link epicnessLevelSceneBuckets}. */
+function epicnessLevelToBucketIndex(level: number): number {
   const clamped = Math.min(
     EPICNESS_LEVEL_MAX,
     Math.max(EPICNESS_LEVEL_MIN, Math.round(level))
   )
-  return (clamped - EPICNESS_LEVEL_MIN) / (EPICNESS_LEVEL_MAX - EPICNESS_LEVEL_MIN)
+  return clamped - EPICNESS_LEVEL_MIN
 }
 
 /**
  * Which scene an epicness button should switch to, or null to stay put.
  *
  * The active scene is never a candidate, so pressing the same level twice moves to a
- * different scene of that intensity. When nothing else is in range the answer is
+ * different scene of that intensity. When the level holds nothing else the answer is
  * null and the caller leaves the scene alone rather than restarting the current one.
  */
 export function pickSceneForEpicnessLevel(
@@ -130,16 +171,9 @@ export function pickSceneForEpicnessLevel(
   level: number,
   random: () => number = Math.random
 ): string | null {
-  const target = epicnessLevelToEnergy(level)
-  const tolerance =
-    EPICNESS_LEVEL_TOLERANCE / (EPICNESS_LEVEL_MAX - EPICNESS_LEVEL_MIN)
-
-  const candidates = light.ids.filter((id) => {
-    if (id === light.active) return false
-    const epicness = light.byId[id]?.epicness
-    if (epicness === undefined || !Number.isFinite(epicness)) return false
-    return Math.abs(clamp01(epicness) - target) <= tolerance + 1e-9
-  })
+  const bucket =
+    epicnessLevelSceneBuckets(light)[epicnessLevelToBucketIndex(level)] ?? []
+  const candidates = bucket.filter((id) => id !== light.active)
 
   if (candidates.length === 0) return null
   const index = Math.floor(clamp01(random()) * candidates.length)

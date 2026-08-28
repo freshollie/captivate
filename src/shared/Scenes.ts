@@ -1,4 +1,4 @@
-import { Params, initBaseParams } from './params'
+import { Params, initBaseParams, type Modulation } from './params'
 import {
   Modulator,
   initModulator,
@@ -40,6 +40,41 @@ export function initSplitScene(): SplitScene_t {
     randomizer: initRandomizerOptions(),
     groups: {},
   }
+}
+
+/**
+ * Deep-copies a split so clipboard entries and pasted splits never alias the
+ * scene they came from. Optional blocks stay absent rather than becoming
+ * `undefined` keys, matching what the reducers persist.
+ */
+export function cloneSplitScene(split: SplitScene_t): SplitScene_t {
+  return {
+    baseParams: { ...split.baseParams },
+    randomizer: { ...split.randomizer },
+    groups: { ...split.groups },
+    ...(split.modManualAnchors !== undefined
+      ? { modManualAnchors: { ...split.modManualAnchors } }
+      : {}),
+    ...(split.splitModShaping !== undefined
+      ? { splitModShaping: { ...split.splitModShaping } }
+      : {}),
+  }
+}
+
+/**
+ * A split copied out of one scene, ready to paste into another.
+ *
+ * Splits alone are not self-contained: how a split moves also lives in the
+ * scene's modulators, so the copy carries that column of the modulation matrix
+ * (one entry per modulator in the source scene) alongside the split itself.
+ */
+export interface SplitSceneClipboard {
+  splitScene: SplitScene_t
+  splitModulations: Modulation[]
+  /** Scene the split was copied from, for the paste tooltip. */
+  sourceSceneName: string
+  /** Heading of the copied split, e.g. `Split 2 - Movers`. */
+  sourceSplitLabel: string
 }
 
 export interface LightScene_t extends SceneBase {

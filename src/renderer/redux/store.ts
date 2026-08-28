@@ -210,6 +210,8 @@ function sanitizeGuiTransientState(gui: GuiState): GuiState {
     aboutOpen: false,
     settingsOpen: false,
     atmosManualTriggerNonceByFixtureId: {},
+    // Window-local scratch state: never saved to disk, never sent to peers.
+    splitClipboard: null,
   }
 }
 
@@ -281,6 +283,7 @@ const rootReducer: Reducer<ReduxState, PayloadAction<any>> = (
           localGui.appSettings ?? cleanState.gui?.appSettings
         ),
         atmosManualTriggerNonceByFixtureId: {},
+        splitClipboard: localGui.splitClipboard ?? null,
       },
       control: initUndoState(cleanState.control),
       mixer: cleanState.mixer,
@@ -351,6 +354,29 @@ export function getCleanReduxState(state: ReduxState) {
 }
 
 export type CleanReduxState = ReturnType<typeof getCleanReduxState>
+
+/**
+ * The store references a publish reads each slice from.
+ *
+ * Lets the publisher see *which* slice moved without serialising anything: the
+ * reducers are Immer-based, so an untouched slice keeps its reference. `gui` is
+ * compared at its source because `getCleanReduxState` sanitises it into a fresh
+ * object on every call, which would otherwise always look changed.
+ */
+export function getCleanReduxStateSliceRefs(state: ReduxState) {
+  return {
+    dmx: state.dmx.present,
+    gui: state.gui,
+    control: state.control.present,
+    mixer: state.mixer,
+    groupControl: state.groupControl,
+    laser: state.laser,
+  }
+}
+
+export type CleanReduxStateSliceRefs = ReturnType<
+  typeof getCleanReduxStateSliceRefs
+>
 
 export function useControlSelector<T>(getVal: (scenes: ControlState) => T) {
   return useTypedSelector((state) => getVal(state.control.present))

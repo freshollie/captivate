@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electron', {
     send(channel, ...args) {
       const validChannels = [
         'new_control_state',
+        'group_control_update',
         'lighting3d_preview_bootstrap',
         'dispatch_to_main',
         'user_command',
@@ -43,6 +44,8 @@ contextBridge.exposeInMainWorld('electron', {
         'midi_connection_update',
         'dispatch',
         'new_control_state',
+        'group_control_update',
+        'request_control_state',
         'lighting3d_preview_bootstrap',
         'lighting3d_realtime_tick',
         'new_time_state',

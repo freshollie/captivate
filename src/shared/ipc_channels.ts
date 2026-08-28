@@ -5,6 +5,22 @@ export default {
   dmx_connection_update: 'dmx_connection_update',
   midi_connection_update: 'midi_connection_update',
   new_control_state: 'new_control_state',
+  /**
+   * Renderer → main: the group-control slice on its own.
+   *
+   * Group faders are the only live control that publishes at fader rate, and the full
+   * state is dominated by `control.light.byId` — hundreds of KB of scenes that a fader
+   * move cannot touch. Sending the slice keeps the payload in the hundreds of bytes.
+   * Everything else still goes through `new_control_state`.
+   */
+  group_control_update: 'group_control_update',
+  /**
+   * Main → renderer: "I have no state to merge a slice into, send me everything."
+   *
+   * The engine loses its copy when the main process restarts, which in dev is every
+   * time a main file is touched. Slice updates cannot rebuild it.
+   */
+  request_control_state: 'request_control_state',
   /** Full Redux snapshot for Lighting 3D preview only (structure + patch). */
   lighting3d_preview_bootstrap: 'lighting3d_preview_bootstrap',
   /** Throttled slim DMX / split / master stream for Lighting 3D preview only. */

@@ -1,6 +1,7 @@
 import ipc_channels, { UserCommand, MainCommand } from '../shared/ipc_channels'
 import type { Lighting3dRealtimeTick } from '../shared/lighting3dPreviewTransport'
 import { CleanReduxState } from './redux/store'
+import type { GroupControlState } from '../shared/groupControl'
 import { RealtimeState } from './redux/realtimeStore'
 import * as midiConnection from '../main/engine/midiConnection'
 import { PayloadAction } from '@reduxjs/toolkit'
@@ -74,6 +75,10 @@ interface Config {
   on_app_close_prompt: () => void
   on_detached_window_close_prompt: () => void
   on_control_state: (state: CleanReduxState) => void
+  /** Group-control slice on its own, for mirror windows. */
+  on_group_control_update: (groupControl: GroupControlState) => void
+  /** Host has no state to merge a slice into: publish a whole one. */
+  on_control_state_request: () => void
   on_lighting3d_preview_bootstrap?: (state: CleanReduxState) => void
   on_lighting3d_realtime_tick?: (tick: Lighting3dRealtimeTick) => void
 }
@@ -139,6 +144,16 @@ export function ipc_setup(config: Config) {
     _config.on_control_state(state)
   )
 
+  ipcRenderer.on(
+    ipc_channels.group_control_update,
+    (groupControl: GroupControlState) =>
+      _config.on_group_control_update(groupControl)
+  )
+
+  ipcRenderer.on(ipc_channels.request_control_state, () =>
+    _config.on_control_state_request()
+  )
+
   if (_config.on_lighting3d_preview_bootstrap !== undefined) {
     ipcRenderer.on(
       ipc_channels.lighting3d_preview_bootstrap,
@@ -158,6 +173,9 @@ export function ipc_setup(config: Config) {
 
 export function send_control_state(cleanState: CleanReduxState) {
   ipcRenderer.send(ipc_channels.new_control_state, cleanState)
+}
+export function send_group_control_update(groupControl: GroupControlState) {
+  ipcRenderer.send(ipc_channels.group_control_update, groupControl)
 }
 export function send_dispatch_to_main(action: PayloadAction<any>) {
   sendDispatchToHost(action)

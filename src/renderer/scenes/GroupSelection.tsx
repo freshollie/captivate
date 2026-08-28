@@ -2,20 +2,25 @@ import IconButton from '@mui/material/IconButton'
 import EditIcon from '@mui/icons-material/Edit'
 import RemoveIcon from '@mui/icons-material/Remove'
 import TuneIcon from '@mui/icons-material/Tune'
+import CopyIcon from '@mui/icons-material/ContentCopy'
 import { useMemo, useState } from 'react'
 import {
   useActiveLightScene,
   useDmxSelector,
   useTypedSelector,
+  type ReduxState,
 } from 'renderer/redux/store'
 import styled from 'styled-components'
 import Popup from '../base/Popup'
 import { PopupTitleRow } from '../base/SectionHelpPopover'
-import { useDispatch } from 'react-redux'
+import { useDispatch, useStore } from 'react-redux'
 import {
   removeSplitSceneByIndex,
   setSceneGroup,
 } from 'renderer/redux/controlSlice'
+import { pushStatusMessage, setSplitClipboard } from 'renderer/redux/guiSlice'
+import { cloneSplitScene } from 'shared/Scenes'
+import { sanitizeSplitModulationForPaste } from 'shared/modulation'
 import { universeHasMovers } from 'shared/dmxFixtures'
 import { getSortedGroupsFromPlacedFixtures } from 'shared/dmxUtil'
 import { universeHasAtmospherics } from 'shared/atmosphericsMapping'
@@ -39,6 +44,10 @@ const NO_GROUPS: { [key: string]: boolean | undefined } = Object.freeze({})
 
 export default function GroupSelection({ splitIndex }: Props) {
   const dispatch = useDispatch()
+  // Copying needs the whole scene (the split *and* its modulation column), but
+  // subscribing to it would re-render this header on every param move, so the
+  // snapshot is read from the store when the button is actually clicked.
+  const store = useStore()
   const [isOpen, setIsOpen] = useState(false)
   const [modShapingOpen, setModShapingOpen] = useState(false)
   const videoEnabled = useTypedSelector((state) => state.gui.videoEnabled)
@@ -106,6 +115,33 @@ export default function GroupSelection({ splitIndex }: Props) {
 
   const splitHeading = splitDisplayName(splitIndex, activeGroups)
 
+  const onCopySplit = () => {
+    const state = store.getState() as ReduxState
+    const lightScenes = state.control.present.light
+    const scene = lightScenes.byId[lightScenes.active]
+    const split = scene?.splitScenes[splitIndex]
+    if (scene === undefined || split === undefined) {
+      return
+    }
+    dispatch(
+      setSplitClipboard({
+        splitScene: cloneSplitScene(split),
+        splitModulations: scene.modulators.map((modulator) =>
+          sanitizeSplitModulationForPaste(modulator.splitModulations[splitIndex])
+        ),
+        sourceSceneName: scene.name,
+        sourceSplitLabel: splitDisplayName(splitIndex, split.groups),
+      })
+    )
+    dispatch(
+      pushStatusMessage({
+        level: 'info',
+        message: `Copied ${splitHeading} from "${scene.name}" — use Paste Split in any scene`,
+        source: 'Splits',
+      })
+    )
+  }
+
   return (
     <Root>
       <GroupName title={splitHeading}>{splitHeading}</GroupName>
@@ -129,6 +165,18 @@ export default function GroupSelection({ splitIndex }: Props) {
           }}
         >
           <EditIcon />
+        </IconButton>
+        <IconButton
+          size="small"
+          sx={{ flexShrink: 0 }}
+          onClick={(e) => {
+            e.preventDefault()
+            onCopySplit()
+          }}
+          aria-label="Copy split"
+          title="Copy this split (params, groups, and modulation) to paste into another scene"
+        >
+          <CopyIcon fontSize="small" />
         </IconButton>
         {splitIndex > 0 ? (
           <IconButton

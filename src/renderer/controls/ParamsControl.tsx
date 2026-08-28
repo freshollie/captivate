@@ -863,8 +863,8 @@ export default function ParamsControl({ splitIndex }: Params) {
           />
         </AtmosphereSliderRow>
       )}
-      {Array.from(customChannels).map((name) => (
-        <ParamSlider key={name} param={name} splitIndex={splitIndex} />
+      {Array.from(customChannels).filter(name => name in baseParams).map((name) => (
+       <ParamSlider key={name} param={name} splitIndex={splitIndex} />
       ))}
       {isVisualizerSplit && activeVisualizerSliders.length > 0 && (
         <VisualizerSliderRow>

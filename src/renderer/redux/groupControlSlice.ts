@@ -101,6 +101,17 @@ export const groupControlSlice = createSlice({
   name: 'groupControl',
   initialState: initGroupControlState(),
   reducers: {
+    /**
+     * Replace the whole slice with the host's copy.
+     *
+     * Mirror windows are sent group-control changes on their own rather than inside a
+     * full state, so they need somewhere to put one that is not `resetRemoteState` —
+     * that rebuilds and revalidates the entire project to land a fader move.
+     */
+    replaceGroupControlState: (
+      _state,
+      { payload }: PayloadAction<GroupControlState>
+    ) => payload,
     setGroupBrightness: (
       state,
       { payload }: PayloadAction<{ group: string; value: number }>
@@ -402,6 +413,7 @@ export const groupControlSlice = createSlice({
 })
 
 export const {
+  replaceGroupControlState,
   setGroupBrightness,
   setGroupStrobe,
   setGroupStrobeFlash,

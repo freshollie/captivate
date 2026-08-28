@@ -610,6 +610,18 @@ export function start(
         scheduleLiveOutputFlush()
       }
     },
+    on_group_control_update: (groupControl) => {
+      const prevState = _controlState
+      if (prevState === null) {
+        telemetryCounter('engine', 'group_control_updates_dropped')
+        return null
+      }
+      const newState = { ...prevState, groupControl }
+      _controlState = newState
+      telemetryCounter('engine', 'group_control_updates')
+      scheduleLiveOutputFlush()
+      return newState
+    },
     on_user_command: (command) => {
       if (command.type === 'IncrementTempo') {
         _nodeLink.setTempo(_realtimeState.time.bpm + command.amount)
