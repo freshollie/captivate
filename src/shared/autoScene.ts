@@ -160,24 +160,85 @@ function epicnessLevelToBucketIndex(level: number): number {
 }
 
 /**
+ * Light scene ids in the order they were last seen, oldest first.
+ *
+ * The epicness buttons treat this as a queue: a level plays all the way round before it
+ * repeats, rather than re-rolling and landing on the scene it just played. Pressing 1,
+ * then 2, then 1 gives a second level-1 scene, and the first one only comes back once
+ * the rest of that level has had a turn.
+ */
+let _sceneRecency: string[] = []
+
+function noteSceneSeen(id: string) {
+  const seenAt = _sceneRecency.indexOf(id)
+  if (seenAt !== -1) {
+    _sceneRecency.splice(seenAt, 1)
+  }
+  _sceneRecency.push(id)
+}
+
+/**
+ * The candidate that has gone longest unseen, random among those tied for oldest.
+ *
+ * Scenes missing from the log have never played, so they sort ahead of everything in
+ * it - a fresh level hands out its untouched scenes first. Ties are broken randomly so
+ * a level that has never been pressed doesn't always open on the same scene.
+ */
+function pickLeastRecentlySeen(
+  candidates: string[],
+  random: () => number
+): string | null {
+  let oldest = Infinity
+  let tied: string[] = []
+
+  for (const id of candidates) {
+    const seenAt = _sceneRecency.indexOf(id)
+    const age = seenAt === -1 ? -1 : seenAt
+    if (age < oldest) {
+      oldest = age
+      tied = [id]
+    } else if (age === oldest) {
+      tied.push(id)
+    }
+  }
+
+  if (tied.length === 0) return null
+  const index = Math.floor(clamp01(random()) * tied.length)
+  return tied[Math.min(index, tied.length - 1)] ?? null
+}
+
+/**
  * Which scene an epicness button should switch to, or null to stay put.
  *
- * The active scene is never a candidate, so pressing the same level twice moves to a
- * different scene of that intensity. When the level holds nothing else the answer is
- * null and the caller leaves the scene alone rather than restarting the current one.
+ * The active scene is never a candidate and the rest of the level is ordered by how
+ * long ago it last played, so pressing the same level repeatedly walks the whole level
+ * before anything is heard twice. When the level holds nothing else the answer is null
+ * and the caller leaves the scene alone rather than restarting the current one.
+ *
+ * Presses move the queue on, so this is called once per press - not to preview.
  */
 export function pickSceneForEpicnessLevel(
   light: LightScenes_t,
   level: number,
   random: () => number = Math.random
 ): string | null {
+  // Scenes deleted since they played would otherwise sit in the queue for the session.
+  _sceneRecency = _sceneRecency.filter((id) => light.byId[id] !== undefined)
+  // Whatever is playing has just been seen, however it was reached, so a manual pick or
+  // an auto-scene switch sends it to the back of its level's queue as well.
+  if (light.byId[light.active] !== undefined) {
+    noteSceneSeen(light.active)
+  }
+
   const bucket =
     epicnessLevelSceneBuckets(light)[epicnessLevelToBucketIndex(level)] ?? []
   const candidates = bucket.filter((id) => id !== light.active)
 
-  if (candidates.length === 0) return null
-  const index = Math.floor(clamp01(random()) * candidates.length)
-  return candidates[Math.min(index, candidates.length - 1)] ?? null
+  const next = pickLeastRecentlySeen(candidates, random)
+  if (next !== null) {
+    noteSceneSeen(next)
+  }
+  return next
 }
 
 /** Next light scene auto would pick at the current energy (for UI cue highlight). */
@@ -328,6 +389,7 @@ export function handleAutoScene(
 export function __resetAutoSceneTrackersForTest() {
   _trackers.light = initSceneAutoTracker()
   _trackers.visual = initSceneAutoTracker()
+  _sceneRecency = []
 }
 
 export function __getAutoSceneTrackerForTest(sceneType: 'light' | 'visual') {

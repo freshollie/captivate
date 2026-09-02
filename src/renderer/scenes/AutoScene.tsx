@@ -170,9 +170,9 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
 /**
  * Assignable 1–11 buttons that jump to a scene of that intensity.
  *
- * Live triggers rather than a setting: each press picks a *different* scene in range,
- * so holding a level and tapping it repeatedly walks through the scenes at that
- * energy. Useful bound to a pad row.
+ * Live triggers rather than a setting: each press takes the scene of that level that
+ * has gone longest unplayed, so tapping a level repeatedly walks round every scene at
+ * that energy before any of them comes back. Useful bound to a pad row.
  */
 function EpicnessLevelButtons() {
   const levels: number[] = []
@@ -181,7 +181,7 @@ function EpicnessLevelButtons() {
   }
 
   return (
-    <EpicnessRow title="Jump to a scene at this intensity (MIDI-assignable). Press again for a different scene at the same level.">
+    <EpicnessRow title="Jump to a scene at this intensity (MIDI-assignable). Press again to move on to the next scene at that level.">
       {levels.map((level) => (
         <ButtonMidiOverlay
           key={level}
