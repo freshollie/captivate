@@ -14,6 +14,7 @@ import {
   setGroupStrobe,
   setBlinderFadeBeats,
   setGroupFollowMasterHotkeys,
+  setGroupOverrideScene,
   setMasterBrightness,
   toggleMasterBlinder,
   toggleMasterStrobe,
@@ -28,6 +29,7 @@ import {
   isGroupBrightnessActive,
   isGroupBrightnessForcedFull,
   isGroupControlActive,
+  isGroupOverridingScene,
   type GroupControl,
 } from '../../shared/groupControl'
 import { flatten_fixtures, getSortedGroupsFromPlacedFixtures } from '../../shared/dmxUtil'
@@ -299,6 +301,7 @@ function GroupCard({
   // Flash / Excl pull the group up to full while held; show that rather than the
   // fader's resting position, or the readout would contradict the lights.
   const brightnessForcedFull = isGroupBrightnessForcedFull(control)
+  const overriding = isGroupOverridingScene(control)
 
   return (
     <Card $active={isActive}>
@@ -313,8 +316,8 @@ function GroupCard({
       </CardHeader>
 
       <BriefTooltip title="Whether the master Blind and Strobe buttons reach this group. The master dimmer always applies.">
-        <FollowMasterRow>
-          <FollowMasterBox
+        <OptionRow>
+          <OptionBox
             type="checkbox"
             checked={control.followMasterHotkeys !== false}
             onChange={(event) =>
@@ -327,22 +330,49 @@ function GroupCard({
             }
             aria-label={`${group} follows the master hotkeys`}
           />
-          <FollowMasterLabel $on={control.followMasterHotkeys !== false}>
+          <OptionLabel $alert={control.followMasterHotkeys === false}>
             follow master hotkeys
-          </FollowMasterLabel>
-        </FollowMasterRow>
+          </OptionLabel>
+        </OptionRow>
+      </BriefTooltip>
+
+      <BriefTooltip title="Take this group off the scene and drive it straight from the fader below: dark at 0%, full white at 100%, whether or not any split addresses these fixtures. For lights you would rather not program, like house lights or a wash over the bar. The master dimmer still trims them, Solo still blacks them out, and Blind still wins.">
+        <OptionRow>
+          <OptionBox
+            type="checkbox"
+            checked={overriding}
+            onChange={(event) =>
+              dispatch(
+                setGroupOverrideScene({
+                  group,
+                  override: event.target.checked,
+                })
+              )
+            }
+            aria-label={`${group} fader overrides the scene`}
+          />
+          <OptionLabel $alert={overriding}>fader overrides scene</OptionLabel>
+        </OptionRow>
       </BriefTooltip>
 
       <FaderRow>
         <Fader
-          label="Bright"
+          // Two different jobs, so two different names: one scales the scene, the
+          // other replaces it.
+          label={overriding ? 'Level' : 'Bright'}
           readout={`${Math.round(effectiveGroupBrightness(control) * 100)}%${
             brightnessForcedFull ? '*' : ''
           }`}
           value={effectiveGroupBrightness(control)}
-          enabled={brightnessForcedFull || isGroupBrightnessActive(control)}
+          enabled={
+            overriding || brightnessForcedFull || isGroupBrightnessActive(control)
+          }
           midiAction={{ type: 'setGroupControl', group, control: 'brightness' }}
-          tooltip="Scales the master/dimmer channel against the scene — 100% leaves it untouched, a scene at 0 stays dark, and fixtures without a dimmer are unaffected. Flash and Excl hold it at 100% while engaged (*)."
+          tooltip={
+            overriding
+              ? 'This group is off the scene: the fader drives it directly, from dark at 0% to full white at 100%, whether or not a split addresses these fixtures. Flash and Excl hold it at 100% while engaged (*).'
+              : 'Scales the master/dimmer channel against the scene — 100% leaves it untouched, a scene at 0 stays dark, and fixtures without a dimmer are unaffected. Flash and Excl hold it at 100% while engaged (*).'
+          }
           onChange={(value) => dispatch(setGroupBrightness({ group, value }))}
         />
         <Fader
@@ -613,7 +643,7 @@ const MasterExempt = styled.div`
   white-space: nowrap;
 `
 
-const FollowMasterRow = styled.label`
+const OptionRow = styled.label`
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -621,7 +651,7 @@ const FollowMasterRow = styled.label`
   margin-bottom: 0.15rem;
 `
 
-const FollowMasterBox = styled.input`
+const OptionBox = styled.input`
   margin: 0;
   width: 0.8rem;
   height: 0.8rem;
@@ -629,11 +659,12 @@ const FollowMasterBox = styled.input`
   cursor: pointer;
 `
 
-const FollowMasterLabel = styled.span<{ $on: boolean }>`
+/** `$alert` is the state worth noticing at a glance, which differs per setting. */
+const OptionLabel = styled.span<{ $alert: boolean }>`
   font-size: 0.62rem;
   letter-spacing: 0.02rem;
   white-space: nowrap;
-  color: ${(p) => (p.$on ? p.theme.colors.text.secondary : '#ff8a4c')};
+  color: ${(p) => (p.$alert ? '#ff8a4c' : p.theme.colors.text.secondary)};
 `
 
 const SoloWarning = styled.div`

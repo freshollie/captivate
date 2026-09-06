@@ -18,7 +18,9 @@ import { inferColorKind } from './dmxColors'
  *   scene sets the ceiling and the fader works down from it, so a scene at 50% caps
  *   the group at 50% and a scene at 0 stays dark. Fixtures with no dimmer do not
  *   respond to it. It needs no arming or releasing: 1.0 *is* the released state,
- *   so it is always live and a full fader changes nothing.
+ *   so it is always live and a full fader changes nothing. `overrideScene` turns
+ *   that on its head for one group at a time: the fader stops scaling the scene and
+ *   drives the fixtures itself, dark at 0 and full white at 1.
  * - **Strobe is a true override.** It writes a raw DMX value the scene engine has no
  *   way to express — `ChannelStrobe` only holds a solid and a strobe constant — so
  *   there is no scene value to scale against. Because 0 is a meaningful strobe value
@@ -137,6 +139,21 @@ export interface GroupControl {
    * strobed or blinded from the master (house lights, practicals).
    */
   followMasterHotkeys: boolean
+  /**
+   * Take the group off the scene entirely: the brightness fader stops scaling what
+   * the scene produced and drives the fixtures directly, to white at whatever level
+   * it is parked at — whether or not any split addresses them.
+   *
+   * The blinder is the same shape of takeover, but it only lasts while a button is
+   * held. This is that takeover standing on the fader instead, for a group nobody
+   * wants to program: house lights, a wash over the bar, a practical.
+   *
+   * It changes what the fader *means*, which is why it is a setting rather than
+   * something the fader can reach on its own. Normally full is the released
+   * position and the scene shows through untouched; on an overriding group full is
+   * full white and 0 is dark, with none of the scene left at either end.
+   */
+  overrideScene: boolean
 }
 
 /**
@@ -316,6 +333,7 @@ export function initGroupControl(): GroupControl {
     releaseHeld: false,
     releaseUsedForLock: false,
     followMasterHotkeys: true,
+    overrideScene: false,
   }
 }
 
@@ -418,11 +436,21 @@ function masterHotkeyFixtures(
   return universeFixtures.filter((fixture) => !exempt.has(fixture))
 }
 
+/** Whether this group's fader has taken its fixtures off the scene. */
+export function isGroupOverridingScene(
+  control: GroupControl | null | undefined
+): boolean {
+  return control?.overrideScene === true
+}
+
 export function isGroupControlActive(
   control: GroupControl | null | undefined
 ): boolean {
   if (control === null || control === undefined) return false
   return (
+    // An overriding group is holding its fixtures off the scene at every fader
+    // position, full included, so it is always doing something.
+    isGroupOverridingScene(control) ||
     isGroupBrightnessActive(control) ||
     control.strobeEnabled === true ||
     control.exclusiveEnabled === true ||
@@ -437,6 +465,16 @@ export function blindingGroupNames(
   const byGroup = safeByGroup(state)
   return Object.keys(byGroup)
     .filter((group) => byGroup[group]?.blinderActive === true)
+    .sort()
+}
+
+/** Group names driving their fixtures straight off the fader, in stable order. */
+export function overridingGroupNames(
+  state: GroupControlState | null | undefined
+): string[] {
+  const byGroup = safeByGroup(state)
+  return Object.keys(byGroup)
+    .filter((group) => isGroupOverridingScene(byGroup[group]))
     .sort()
 }
 
@@ -566,7 +604,14 @@ function resolveOverrides(
       // shares with a dimmed group has to come up to full, and HTP only sees values
       // that were actually offered.
       const forcesFull = isGroupBrightnessForcedFull(control)
-      if (forcesFull || isGroupBrightnessActive(control)) {
+      // An overriding group's fader is not a scaling of the scene, so it has no
+      // business here: it is written whole further down. Offering it to HTP would
+      // both scale the scene it is supposed to be replacing and drag any group it
+      // overlaps up with it.
+      if (
+        !isGroupOverridingScene(control) &&
+        (forcesFull || isGroupBrightnessActive(control))
+      ) {
         const brightness = forcesFull ? 1 : clamp01(control.brightness)
         current.brightness =
           current.brightness === undefined
@@ -595,6 +640,41 @@ function readChannel(channels: number[], channelIdx: number): number {
   const index = channelIdx - 1
   if (index < 0 || index >= channels.length) return 0
   return channels[index] ?? 0
+}
+
+/**
+ * Where a fixture's level lives on this channel: a master channel, or the master
+ * range of a split that folds the dimmer in with something else.
+ *
+ * Only for the full-takeover writers below, which replace the channel outright. The
+ * proportional fader has to be fussier — it may only touch a split while the scene
+ * has it inside the dimmer range — so it keeps its own reading.
+ */
+function masterRangeOf(
+  channel: FixtureChannel
+): { min: number; max: number; isOnOff: boolean } | null {
+  if (channel.type === 'master') {
+    return { min: channel.min, max: channel.max, isOnOff: channel.isOnOff === true }
+  }
+  if (channel.type === 'split') {
+    for (const range of channel.ranges) {
+      if (range.channel.type === 'master') {
+        return {
+          min: range.min,
+          max: range.max,
+          isOnOff: range.channel.isOnOff === true,
+        }
+      }
+    }
+  }
+  return null
+}
+
+function fixtureHasDimmer(fixture: FlattenedFixture): boolean {
+  for (const [, channel] of fixture.channels) {
+    if (masterRangeOf(channel) !== null) return true
+  }
+  return false
 }
 
 /** Scale a dimmer's current level within its own DMX range. */
@@ -845,32 +925,96 @@ function applyBlinder(
   }
 
   for (const [fixture, level] of levelByFixture) {
-    {
-      for (const [channelIdx, channel] of fixture.channels) {
-        if (channel.type === 'master') {
-          writeChannel(
-            channels,
-            channelIdx,
-            channel.isOnOff
-              ? level > 0.5
-                ? channel.max
-                : channel.min
-              : channel.min + (channel.max - channel.min) * level
-          )
-          continue
-        }
-        if (blinderWhiteContribution(channel) === 'full') {
-          writeChannel(channels, channelIdx, DMX_MAX_VALUE * level)
-          continue
-        }
-        const wheelWhite = colorWheelWhiteDmx(channel)
-        if (wheelWhite !== null) {
-          // A wheel slot is a position, not a level — it goes to white and stays
-          // there for the whole fade. The dimmer above is what actually fades.
-          writeChannel(channels, channelIdx, wheelWhite)
-        }
+    driveFixtureWhite(channels, fixture, level, true)
+  }
+}
+
+/**
+ * Drive one fixture to white at `level`, over the top of whatever the scene left on
+ * its channels. Shared by the blinder and by an overriding group's fader.
+ *
+ * `scaleEmitters` decides where the level lands on a fixture that has a dimmer. The
+ * blinder scales the colour emitters as well as the dimmer, which costs nothing for
+ * a button that lives at full and fades out over a beat. A fader parked at 60% is a
+ * different matter — scaling both would land it near 36% — so an override holds the
+ * emitters at full and lets the dimmer carry the level on its own. A fixture with no
+ * dimmer scales its emitters either way; there is nowhere else to put a level.
+ */
+function driveFixtureWhite(
+  channels: number[],
+  fixture: FlattenedFixture,
+  level: number,
+  scaleEmitters: boolean
+): void {
+  const emitterLevel = scaleEmitters || !fixtureHasDimmer(fixture) ? level : 1
+
+  for (const [channelIdx, channel] of fixture.channels) {
+    const master = masterRangeOf(channel)
+    if (master !== null) {
+      writeChannel(
+        channels,
+        channelIdx,
+        master.isOnOff
+          ? level > 0.5
+            ? master.max
+            : master.min
+          : master.min + (master.max - master.min) * level
+      )
+      continue
+    }
+    if (blinderWhiteContribution(channel) === 'full') {
+      writeChannel(channels, channelIdx, DMX_MAX_VALUE * emitterLevel)
+      continue
+    }
+    const wheelWhite = colorWheelWhiteDmx(channel)
+    if (wheelWhite !== null) {
+      // A wheel slot is a position, not a level — it goes to white and stays
+      // there for the whole fade. The dimmer above is what actually fades.
+      writeChannel(channels, channelIdx, wheelWhite)
+    }
+  }
+}
+
+/**
+ * Drive the overriding groups straight from their own faders.
+ *
+ * Everything a blinder does, held on a fader instead of a button: white at the
+ * fader's level, on every fixture in the group, whether or not the scene addresses
+ * them. Fixtures in two overriding groups take the brighter of the two, matching how
+ * the blinder and the proportional faders resolve an overlap.
+ *
+ * Placed after the proportional faders — whose work it replaces — and before the
+ * master, so the master dimmer still trims these groups the way it trims the rest of
+ * the rig, and before the solo blackout, so an overriding group outside a solo goes
+ * dark with everything else.
+ */
+function applySceneOverrides(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined,
+  /** Overriding groups, already worked out by the caller. */
+  overridingGroups: string[]
+): void {
+  if (overridingGroups.length === 0) return
+
+  const byGroup = safeByGroup(groupControl)
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, overridingGroups)
+  const levelByFixture = new Map<FlattenedFixture, number>()
+
+  for (const group of overridingGroups) {
+    // `effectiveGroupBrightness` rather than the raw fader, so Flash and Solo pull
+    // an overriding group to full white the same way they pull a normal one to full.
+    const level = effectiveGroupBrightness(byGroup[group])
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
+      const existing = levelByFixture.get(fixture)
+      if (existing === undefined || level > existing) {
+        levelByFixture.set(fixture, level)
       }
     }
+  }
+
+  for (const [fixture, level] of levelByFixture) {
+    driveFixtureWhite(channels, fixture, level, false)
   }
 }
 
@@ -995,6 +1139,15 @@ export function applyGroupControlsToUniverse(
       }
     }
   }
+
+  // Groups taken off the scene are written whole, replacing both the scene and the
+  // proportional faders above.
+  applySceneOverrides(
+    channels,
+    universeFixtures,
+    groupControl,
+    overridingGroupNames(groupControl)
+  )
 
   // The master layers on top of the per-group faders, never replacing them.
   applyMaster(channels, universeFixtures, groupControl)

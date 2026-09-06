@@ -308,6 +308,20 @@ export const groupControlSlice = createSlice({
     ) => {
       controlFor(state, payload.group).followMasterHotkeys = payload.follow === true
     },
+    /**
+     * Hand the group's fixtures to its own fader, off the scene entirely.
+     *
+     * A setting, not a gesture: it survives Release, Release all and scene changes,
+     * the same way `followMasterHotkeys` does. The fader keeps whatever position it
+     * was on, which means ticking this on a group left at full lights it to full
+     * white immediately — the honest reading of a fader that now means what it says.
+     */
+    setGroupOverrideScene: (
+      state,
+      { payload }: PayloadAction<{ group: string; override: boolean }>
+    ) => {
+      controlFor(state, payload.group).overrideScene = payload.override === true
+    },
     setMasterBrightness: (state, { payload }: PayloadAction<number>) => {
       state.master.brightness = clamp01(payload)
     },
@@ -423,6 +437,7 @@ export const {
   releaseAllGroupStrobes,
   releaseAllLiveOverrides,
   setGroupFollowMasterHotkeys,
+  setGroupOverrideScene,
   setMasterBrightness,
   setMasterStrobe,
   toggleMasterStrobe,

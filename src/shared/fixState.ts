@@ -1351,6 +1351,9 @@ export function fixGroupControlState(
       followMasterHotkeys:
         control.followMasterHotkeys !== false &&
         (control as { followMaster?: unknown }).followMaster !== false,
+      // A setting rather than a gesture, so it persists — and opt-in, so a project
+      // written before it existed keeps every group on the scene.
+      overrideScene: control.overrideScene === true,
     }
   }
 
