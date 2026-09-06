@@ -20,8 +20,6 @@ import AddIcon from '@mui/icons-material/Add'
 import PasteIcon from '@mui/icons-material/ContentPaste'
 import { useDispatch } from 'react-redux'
 import { addSplitScene, pasteSplitScene } from 'renderer/redux/controlSlice'
-import { pushStatusMessage } from 'renderer/redux/guiSlice'
-import { countUnmappableSplitModulations } from 'shared/modulation'
 import { SplitScenesHelpButton } from './sceneHelpButtons'
 
 export default function SplitScenes({
@@ -36,7 +34,6 @@ export default function SplitScenes({
   const splitSceneCount = useActiveLightScene(
     (scene) => scene.splitScenes.length
   )
-  const modulatorCount = useActiveLightScene((scene) => scene.modulators.length)
   const clipboard = useTypedSelector((state) => state.gui.splitClipboard)
 
   const indexes = indexArray(splitSceneCount)
@@ -47,32 +44,9 @@ export default function SplitScenes({
     if (clipboard === null || clipboard === undefined) {
       return
     }
-    // Modulator counts differ between scenes, so say what did not survive the
-    // paste rather than letting the split quietly move less than it used to.
-    const dropped = countUnmappableSplitModulations(
-      clipboard.splitModulations,
-      modulatorCount
-    )
-    dispatch(
-      pasteSplitScene({
-        splitScene: clipboard.splitScene,
-        splitModulations: clipboard.splitModulations,
-      })
-    )
-    dispatch(
-      pushStatusMessage({
-        level: dropped > 0 ? 'warn' : 'info',
-        message:
-          dropped > 0
-            ? `Pasted ${clipboard.sourceSplitLabel} from "${clipboard.sourceSceneName}" — dropped ${dropped} modulation ${
-                dropped === 1 ? 'column' : 'columns'
-              }: this scene has ${modulatorCount} LFO${
-                modulatorCount === 1 ? '' : 's'
-              }, the copy used ${clipboard.splitModulations.length}`
-            : `Pasted ${clipboard.sourceSplitLabel} from "${clipboard.sourceSceneName}"`,
-        source: 'Splits',
-      })
-    )
+    // No status message: the new split appearing in the list is the confirmation,
+    // and a flashing bar entry on every paste is just noise.
+    dispatch(pasteSplitScene({ splitScene: clipboard.splitScene }))
   }
 
   return (
@@ -104,7 +78,7 @@ export default function SplitScenes({
               <AddSplitButton
                 type="button"
                 onClick={onPasteSplitScene}
-                title={`Paste ${clipboard.sourceSplitLabel} copied from "${clipboard.sourceSceneName}" as a new split here`}
+                title={`Paste ${clipboard.sourceSplitLabel} copied from "${clipboard.sourceSceneName}" as a new split here (groups and params, without modulation)`}
               >
                 <PasteIcon fontSize="small" />
                 <span>Paste Split</span>

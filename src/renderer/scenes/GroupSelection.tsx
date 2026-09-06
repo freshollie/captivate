@@ -20,7 +20,6 @@ import {
 } from 'renderer/redux/controlSlice'
 import { pushStatusMessage, setSplitClipboard } from 'renderer/redux/guiSlice'
 import { cloneSplitScene } from 'shared/Scenes'
-import { sanitizeSplitModulationForPaste } from 'shared/modulation'
 import { universeHasMovers } from 'shared/dmxFixtures'
 import { getSortedGroupsFromPlacedFixtures } from 'shared/dmxUtil'
 import { universeHasAtmospherics } from 'shared/atmosphericsMapping'
@@ -44,8 +43,8 @@ const NO_GROUPS: { [key: string]: boolean | undefined } = Object.freeze({})
 
 export default function GroupSelection({ splitIndex }: Props) {
   const dispatch = useDispatch()
-  // Copying needs the whole scene (the split *and* its modulation column), but
-  // subscribing to it would re-render this header on every param move, so the
+  // Copying needs the active scene (for the split snapshot and the source name),
+  // but subscribing to it would re-render this header on every param move, so the
   // snapshot is read from the store when the button is actually clicked.
   const store = useStore()
   const [isOpen, setIsOpen] = useState(false)
@@ -126,9 +125,6 @@ export default function GroupSelection({ splitIndex }: Props) {
     dispatch(
       setSplitClipboard({
         splitScene: cloneSplitScene(split),
-        splitModulations: scene.modulators.map((modulator) =>
-          sanitizeSplitModulationForPaste(modulator.splitModulations[splitIndex])
-        ),
         sourceSceneName: scene.name,
         sourceSplitLabel: splitDisplayName(splitIndex, split.groups),
       })
@@ -136,7 +132,7 @@ export default function GroupSelection({ splitIndex }: Props) {
     dispatch(
       pushStatusMessage({
         level: 'info',
-        message: `Copied ${splitHeading} from "${scene.name}" — use Paste Split in any scene`,
+        message: `Copied ${splitHeading} from "${scene.name}" (groups and params, without modulation) — use Paste Split in any scene`,
         source: 'Splits',
       })
     )
@@ -174,7 +170,7 @@ export default function GroupSelection({ splitIndex }: Props) {
             onCopySplit()
           }}
           aria-label="Copy split"
-          title="Copy this split (params, groups, and modulation) to paste into another scene"
+          title="Copy this split's groups and params (not its modulation) to paste into another scene"
         >
           <CopyIcon fontSize="small" />
         </IconButton>

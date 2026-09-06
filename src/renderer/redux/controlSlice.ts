@@ -12,7 +12,6 @@ import {
   type ModManualAnchor,
   type SplitModShaping,
   normSplitShapingForStore,
-  sanitizeSplitModulationForPaste,
 } from '../../shared/modulation'
 import { nanoid } from 'nanoid'
 import { RandomizerOptions } from '../../shared/randomizer'
@@ -80,8 +79,6 @@ interface SetModManualAnchorPayload {
 
 interface PasteSplitScenePayload {
   splitScene: SplitScene_t
-  /** Source scene's modulation column, mapped onto this scene's modulators by index. */
-  splitModulations: Array<{ [key: string]: number | undefined }>
   /** Overwrite this split instead of appending a new one at the end. */
   targetIndex?: number
 }
@@ -750,9 +747,9 @@ const scenesSlice = createSlice({
     /**
      * Drops a copied split (see `gui.splitClipboard`) into the active scene.
      *
-     * Modulators are per-scene, so only the amounts aimed at LFOs this scene
-     * actually has can come across; the rest are dropped, and the UI warns with
-     * the count from `countUnmappableSplitModulations`.
+     * Only the split's own configuration is pasted. Modulators are per-scene, so
+     * the copied split's modulation amounts are not carried over: the pasted
+     * split starts with an empty column on every modulator here.
      */
     pasteSplitScene: (
       state,
@@ -771,12 +768,11 @@ const scenesSlice = createSlice({
         } else {
           scene.splitScenes.push(pasted)
         }
-        scene.modulators.forEach((modulator, modIndex) => {
+        scene.modulators.forEach((modulator) => {
           while (modulator.splitModulations.length <= splitIndex) {
             modulator.splitModulations.push({})
           }
-          modulator.splitModulations[splitIndex] =
-            sanitizeSplitModulationForPaste(payload.splitModulations?.[modIndex])
+          modulator.splitModulations[splitIndex] = {}
         })
       })
     },

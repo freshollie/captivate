@@ -1,4 +1,4 @@
-import { Params, initBaseParams, type Modulation } from './params'
+import { Params, initBaseParams } from './params'
 import {
   Modulator,
   initModulator,
@@ -64,13 +64,13 @@ export function cloneSplitScene(split: SplitScene_t): SplitScene_t {
 /**
  * A split copied out of one scene, ready to paste into another.
  *
- * Splits alone are not self-contained: how a split moves also lives in the
- * scene's modulators, so the copy carries that column of the modulation matrix
- * (one entry per modulator in the source scene) alongside the split itself.
+ * Only the split's own configuration travels — groups, base params, randomizer
+ * and shaping. Modulation amounts live on the scene's modulators and stay
+ * behind: they are keyed to LFOs the destination scene may not have, so a
+ * pasted split lands unmodulated and is wired up in the new scene.
  */
 export interface SplitSceneClipboard {
   splitScene: SplitScene_t
-  splitModulations: Modulation[]
   /** Scene the split was copied from, for the paste tooltip. */
   sourceSceneName: string
   /** Heading of the copied split, e.g. `Split 2 - Movers`. */

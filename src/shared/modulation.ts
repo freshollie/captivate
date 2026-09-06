@@ -107,45 +107,6 @@ interface ModSnapshot {
 
 const INTER_MOD_PREFIX = 'intermod:lfo:'
 
-/**
- * Cleans one modulator's column for a split that is being pasted in.
- *
- * `intermod:lfo:*` keys belong to the modulator, not to any split — `fixLightScenes`
- * hoists them out of `splitModulations` — so a paste must not smuggle them back in.
- */
-export function sanitizeSplitModulationForPaste(
-  modulation: Modulation | undefined
-): Modulation {
-  const cleaned: Modulation = {}
-  if (modulation === undefined || modulation === null) {
-    return cleaned
-  }
-  for (const [key, value] of Object.entries(modulation)) {
-    if (key.startsWith(INTER_MOD_PREFIX)) continue
-    if (typeof value !== 'number' || !Number.isFinite(value)) continue
-    cleaned[key] = value
-  }
-  return cleaned
-}
-
-/**
- * How many copied modulators have nowhere to land, because the scene being pasted
- * into has fewer LFOs than the one the split was copied from.
- */
-export function countUnmappableSplitModulations(
-  splitModulations: Array<Modulation | undefined> | undefined,
-  targetModulatorCount: number
-): number {
-  if (!Array.isArray(splitModulations)) return 0
-  let unmappable = 0
-  for (let i = targetModulatorCount; i < splitModulations.length; i++) {
-    if (Object.keys(sanitizeSplitModulationForPaste(splitModulations[i])).length > 0) {
-      unmappable += 1
-    }
-  }
-  return unmappable
-}
-
 /** LFO wave/shape parameters that can be inter-modulated (must match modulator UI). */
 export const INTER_MOD_TARGET_PROPS = [
   'period',
