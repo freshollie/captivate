@@ -1327,7 +1327,8 @@ function calculateDmxForUniverse(
       channels,
       all_fixtures,
       state.groupControl,
-      blinderLevels
+      blinderLevels,
+      { calibratingFixtureId: moverCalibrationOverride?.fixtureId }
     )
   } catch (error) {
     reportGroupControlFailure(error)

@@ -120,6 +120,19 @@ export const groupControlSlice = createSlice({
       controlFor(state, payload.group).brightness = clamp01(payload.value)
     },
     /**
+     * Pull this group's movers onto their mirror-ball aims, 0 = scene, 1 = locked on.
+     *
+     * Always live, like brightness: there is no arming to do because the bottom of
+     * the fader hands every head straight back to the scene. Heads with no aim
+     * captured for them are unaffected at any position.
+     */
+    setGroupDiscoBall: (
+      state,
+      { payload }: PayloadAction<{ group: string; value: number }>
+    ) => {
+      controlFor(state, payload.group).discoBall = clamp01(payload.value)
+    },
+    /**
      * Trims a strobe that is already live, and does nothing otherwise.
      *
      * The fader deliberately cannot arm: 0 is a real strobe value rather than "off",
@@ -429,6 +442,7 @@ export const groupControlSlice = createSlice({
 export const {
   replaceGroupControlState,
   setGroupBrightness,
+  setGroupDiscoBall,
   setGroupStrobe,
   setGroupStrobeFlash,
   toggleGroupStrobeFlash,

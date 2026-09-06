@@ -130,6 +130,17 @@ export function BoundCornersHelpButton() {
   )
 }
 
+export function DiscoBallAimHelpButton() {
+  return (
+    <FieldHelpButton ariaLabel="How the disco ball aim works">
+      Per fixture: where this head has to point to hit the mirror ball. Aim it with
+      the sliders, then save. The Disco fader on the Groups page blends a group&apos;s
+      movers from the scene&apos;s aim onto this one and clears their gobo and
+      prism — heads with no aim saved stay with the scene.
+    </FieldHelpButton>
+  )
+}
+
 export function MoverFloorBoundsHelpButton() {
   return (
     <FieldHelpButton ariaLabel="Floor bounds vs free aim">

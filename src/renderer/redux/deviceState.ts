@@ -90,7 +90,7 @@ export function getSetBaseParamSplitIndex(action: SetBaseParam): number {
 interface SetGroupControl {
   type: 'setGroupControl'
   group: string
-  control: 'brightness' | 'strobe'
+  control: 'brightness' | 'strobe' | 'discoBall'
 }
 
 /** Solo a group. Momentary under MIDI: held while the pad is down. */

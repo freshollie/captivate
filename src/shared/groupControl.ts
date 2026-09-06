@@ -1,8 +1,9 @@
-import type { FixtureChannel, FlattenedFixture } from './dmxFixtures'
+import type { ChannelAxis, FixtureChannel, FlattenedFixture } from './dmxFixtures'
 import { DMX_MAX_VALUE, DMX_MIN_VALUE } from './dmxFixtures'
 import {
   fixtureMatchesGroup,
   getFixturesInGroups,
+  getIndexedMapSlotOutputDmx,
   isVirtualFixtureGroup,
   listColorMapSlots,
 } from './dmxUtil'
@@ -12,7 +13,7 @@ import { inferColorKind } from './dmxColors'
  * Per-group live controls, applied to the finished scene output on the way to the
  * wire. Grouping here is independent of scenes and splits.
  *
- * The two faders deliberately differ:
+ * The three faders deliberately differ:
  *
  * - **Brightness is proportional, and only touches the master/dimmer channel.** The
  *   scene sets the ceiling and the fader works down from it, so a scene at 50% caps
@@ -30,10 +31,37 @@ import { inferColorKind } from './dmxColors'
  *   otherwise, so a knocked fader — or a controller spilling its positions when it
  *   connects — cannot start the rig strobing. Flash plus Release locks the strobe on,
  *   which is what frees a hand to dial the fader.
+ * - **Disco ball is a positional blend, and only touches pan/tilt and the gobo.** It
+ *   pulls every head in the group that has a mirror-ball aim of its own away from
+ *   whatever the scene is aiming it at and onto the ball, 0 being the scene untouched
+ *   and 1 the head locked on, and clears the gobo and prism so the beams reaching the
+ *   ball are clean. Like brightness it is always live, because 0 *is* the released state;
+ *   unlike brightness it rests at the bottom of its travel, since the scene — not the
+ *   fader — is the thing it hands back to.
+ *
+ *   The bottom tenth of its travel is dead, because unlike the other two faders this
+ *   one moves the rig physically: a knock, or a controller spilling fader positions
+ *   when it connects, must not start swinging heads across the room.
  */
 export interface GroupControl {
   /** 0..1, multiplied into the scene's level. 1 = no change. Always applied. */
   brightness: number
+  /**
+   * Raw fader position, 0..1. Read it through {@link groupDiscoBallLevel} rather than
+   * directly: the bottom {@link DISCO_BALL_DEAD_ZONE} of the travel is dead, and the
+   * rest is rescaled across it, so the position and the blend it produces are not the
+   * same number. This field is the one the fader — hardware or on-screen — sits on.
+   *
+   * The blend runs from the scene's aim to each head's own mirror-ball aim: released
+   * leaves the scene alone, full locks the heads on the ball, and anything between
+   * sits them proportionally along the way.
+   *
+   * Position, gobo and prism only. Levels and colour stay with the scene, so the
+   * movers keep doing whatever they were doing; they just do it pointing at the ball
+   * with a clean beam. Heads with no aim captured on the Movers page are left alone
+   * entirely.
+   */
+  discoBall: number
   /**
    * Armed by Flash — never by the fader — and cleared by Release, by letting go of an
    * unlocked flash, or, if it was locked, by a light-scene change.
@@ -318,6 +346,7 @@ export function advanceBlinderLevels(
 export function initGroupControl(): GroupControl {
   return {
     brightness: 1,
+    discoBall: 0,
     strobeEnabled: false,
     strobe: 0,
     strobeFlashLevel: DEFAULT_STROBE_FLASH_LEVEL,
@@ -367,6 +396,46 @@ export function isGroupBrightnessActive(
 ): boolean {
   const brightness = control?.brightness
   return Number.isFinite(brightness) && (brightness as number) < 1
+}
+
+/**
+ * Dead travel at the bottom of the disco fader, as a fraction of its throw.
+ *
+ * The other two faders are safe to knock — brightness only trims a level and strobe
+ * is inert until Flash arms it. This one physically swings heads across the room, so
+ * it takes a deliberate push to leave zero, and a controller that spills its fader
+ * positions when it connects lands harmlessly inside the dead band.
+ */
+export const DISCO_BALL_DEAD_ZONE = 0.1
+
+/** Where the fader is sitting, dead zone included. For drawing the cap. */
+export function groupDiscoBallPosition(
+  control: GroupControl | null | undefined
+): number {
+  const position = control?.discoBall
+  if (!Number.isFinite(position)) return 0
+  return Math.min(1, Math.max(0, position as number))
+}
+
+/**
+ * How far this group's movers are actually pulled onto the ball. 0 = not at all.
+ *
+ * The live travel above the dead zone is rescaled across the full 0..1 blend, so the
+ * top of the fader still means locked on rather than 90% of the way there.
+ */
+export function groupDiscoBallLevel(
+  control: GroupControl | null | undefined
+): number {
+  const position = groupDiscoBallPosition(control)
+  if (position <= DISCO_BALL_DEAD_ZONE) return 0
+  return (position - DISCO_BALL_DEAD_ZONE) / (1 - DISCO_BALL_DEAD_ZONE)
+}
+
+/** Disco ball inside its dead zone is the released state. */
+export function isGroupDiscoBallActive(
+  control: GroupControl | null | undefined
+): boolean {
+  return groupDiscoBallLevel(control) > 0
 }
 
 export function initGroupControlState(): GroupControlState {
@@ -452,6 +521,7 @@ export function isGroupControlActive(
     // position, full included, so it is always doing something.
     isGroupOverridingScene(control) ||
     isGroupBrightnessActive(control) ||
+    isGroupDiscoBallActive(control) ||
     control.strobeEnabled === true ||
     control.exclusiveEnabled === true ||
     control.blinderActive === true
@@ -888,6 +958,135 @@ function blinderWhiteContribution(channel: FixtureChannel): 'full' | null {
 }
 
 /**
+ * Where this axis channel can legally sit, low end first.
+ *
+ * A fixture profile can hold a reversed range (`max` below `min`) to flip a head, so
+ * the bounds cannot be read off the field names.
+ */
+function axisChannelBounds(channel: ChannelAxis): { low: number; high: number } {
+  const min = Number.isFinite(channel.min) ? channel.min : DMX_MIN_VALUE
+  const max = Number.isFinite(channel.max) ? channel.max : DMX_MAX_VALUE
+  return { low: Math.min(min, max), high: Math.max(min, max) }
+}
+
+/** Slot 0 of a gobo or prism map — "Open" / "Off" on every profile that lists one. */
+function firstWheelSlotDmx(channel: FixtureChannel): number | null {
+  if (channel.type === 'goboMap') {
+    if (channel.gobos.length <= 0) return null
+    return getIndexedMapSlotOutputDmx(channel.gobos, 0)
+  }
+  if (channel.type === 'prismMap') {
+    if (channel.prisms.length <= 0) return null
+    return getIndexedMapSlotOutputDmx(channel.prisms, 0)
+  }
+  return null
+}
+
+/**
+ * What to write to clear this channel's gobo and prism wheels, or null if it drives
+ * neither.
+ *
+ * Clear is slot 0 — the same slot a scene's gobo or prism fader selects at the bottom
+ * of its travel — emitted mid-range rather than at its edge, and clamped into its own
+ * band when the wheel shares a channel with something else.
+ */
+function clearWheelValueOf(channel: FixtureChannel): number | null {
+  const direct = firstWheelSlotDmx(channel)
+  if (direct !== null) return direct
+
+  if (channel.type === 'split') {
+    for (const range of channel.ranges) {
+      const nested = firstWheelSlotDmx(range.channel)
+      if (nested === null) continue
+      return Math.min(range.max, Math.max(range.min, nested))
+    }
+  }
+  return null
+}
+
+/**
+ * Slide every mover in a disco-balled group from the aim the scene gave it onto its
+ * own mirror-ball aim, clearing its gobo and prism on the way.
+ *
+ * Blended on the wire rather than back in the scene's pad maths, for the same reason
+ * the rest of this file works here: the fader has to reach movers the active scene
+ * never addresses, and it has to mean the same thing whatever produced the aim it is
+ * pulling away from — a split's pad, phase-offset follow, the Movers page override.
+ *
+ * Interpolation is per axis in DMX, which is what "halfway to the ball" has to mean
+ * for a head: pan and tilt each cross half the distance, so the beam sweeps an arc
+ * onto the ball rather than tracking a line across the room. The wheels do not
+ * interpolate — a gobo or prism has no half-position — so they snap to their first
+ * slot the moment the fader leaves its dead zone and stay there until it comes back.
+ * Only heads with an aim captured for them are touched at all: one that is not going
+ * to the ball keeps the gobo and prism the scene gave it.
+ */
+function applyDiscoBallAim(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined,
+  /** Head currently being aimed by hand on the Movers page, if any. */
+  calibratingFixtureId: string | undefined
+): void {
+  const byGroup = safeByGroup(groupControl)
+  const discoGroups = Object.keys(byGroup).filter((group) =>
+    isGroupDiscoBallActive(byGroup[group])
+  )
+  if (discoGroups.length === 0) return
+
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, discoGroups)
+  const levelByFixture = new Map<FlattenedFixture, number>()
+
+  for (const group of discoGroups) {
+    const level = groupDiscoBallLevel(byGroup[group])
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
+      // A head in two disco-balled groups follows whichever fader is further up, the
+      // same way overlapping brightness faders resolve.
+      levelByFixture.set(
+        fixture,
+        Math.max(levelByFixture.get(fixture) ?? 0, level)
+      )
+    }
+  }
+
+  for (const [fixture, level] of levelByFixture) {
+    const aim = fixture.moverDiscoBall
+    if (aim === null || aim === undefined) continue
+    // The head on the calibration dialog is being pointed somewhere deliberately;
+    // dragging it part-way to the ball would fight the operator sighting it.
+    if (
+      calibratingFixtureId !== undefined &&
+      fixture.fixtureId === calibratingFixtureId
+    ) {
+      continue
+    }
+
+    for (const [channelIdx, channel] of fixture.channels) {
+      if (channel.type !== 'axis') {
+        const clearWheel = clearWheelValueOf(channel)
+        if (clearWheel !== null) writeChannel(channels, channelIdx, clearWheel)
+        continue
+      }
+
+      if (channel.isFine) {
+        // Coarse owns the blend, so park fine rather than leaving a 16-bit head
+        // carrying residue from wherever the scene had it.
+        writeChannel(channels, channelIdx, channel.min)
+        continue
+      }
+
+      const rawTarget = channel.dir === 'x' ? aim.pan : aim.tilt
+      if (!Number.isFinite(rawTarget)) continue
+
+      const { low, high } = axisChannelBounds(channel)
+      const target = Math.min(high, Math.max(low, rawTarget))
+      const current = readChannel(channels, channelIdx)
+      writeChannel(channels, channelIdx, current + (target - current) * level)
+    }
+  }
+}
+
+/**
  * Drive a group to white, overriding whatever the scene put on the wire.
  *
  * Deliberately the last thing written: a blinder is a full takeover of the fixture,
@@ -1112,7 +1311,11 @@ export function applyGroupControlsToUniverse(
   universeFixtures: FlattenedFixture[],
   groupControl: GroupControlState | null | undefined,
   /** Per-group blinder level from `advanceBlinderLevels`. */
-  blinderLevels: { [group: string]: number } = {}
+  blinderLevels: { [group: string]: number } = {},
+  options: {
+    /** Head being aimed by hand on the Movers page — left out of the disco blend. */
+    calibratingFixtureId?: string
+  } = {}
 ): void {
   const hasBlinder = Object.keys(blinderLevels).length > 0
   const master = safeMaster(groupControl)
@@ -1152,10 +1355,62 @@ export function applyGroupControlsToUniverse(
   // The master layers on top of the per-group faders, never replacing them.
   applyMaster(channels, universeFixtures, groupControl)
 
+  // Pan/tilt only, so it neither reads nor disturbs anything the level writers
+  // above and below touch.
+  applyDiscoBallAim(
+    channels,
+    universeFixtures,
+    groupControl,
+    options.calibratingFixtureId
+  )
+
   // Solo wins over any level the faders above just set...
   applyExclusiveBlackout(channels, universeFixtures, groupControl)
   // ...and the blinder wins over everything, including a solo blackout.
   applyBlinder(channels, universeFixtures, groupControl, blinderLevels)
+}
+
+/**
+ * How many heads in this group the disco fader would actually move, for the UI.
+ *
+ * Counts heads with an aim captured for them rather than movers in general: a card
+ * whose movers have never been pointed at the ball has a fader that does nothing, and
+ * the count is what says so.
+ */
+export function countDiscoBallAimedFixturesInGroup(
+  fixtures: FlattenedFixture[],
+  group: string
+): number {
+  const ids = new Set<string>()
+  let unnamed = 0
+  for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
+    if (fixture.moverDiscoBall === null || fixture.moverDiscoBall === undefined) {
+      continue
+    }
+    if (!fixture.channels.some(([, channel]) => channel.type === 'axis')) {
+      continue
+    }
+    const id = fixture.fixtureId?.trim()
+    if (id === undefined || id.length === 0) {
+      unnamed += 1
+      continue
+    }
+    ids.add(id)
+  }
+  return ids.size + unnamed
+}
+
+/** Whether this group holds any pan/tilt head at all, aimed at the ball or not. */
+export function groupHasMovers(
+  fixtures: FlattenedFixture[],
+  group: string
+): boolean {
+  for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
+    if (fixture.channels.some(([, channel]) => channel.type === 'axis')) {
+      return true
+    }
+  }
+  return false
 }
 
 /** Fixture count a group control will actually reach, for the UI. */

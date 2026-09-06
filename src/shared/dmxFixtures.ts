@@ -572,6 +572,30 @@ export function initMoverBounds(): MoverBounds {
 
 export type MoverMountOrientation = 'upright' | 'inverted'
 
+/**
+ * Where this head has to point to hit the mirror ball.
+ *
+ * Raw pan/tilt DMX rather than a pad coordinate: the ball hangs at one place in the
+ * room, so every head aims at it from its own angle. That is the same reason the
+ * calibration anchors and the bound corners are stored per fixture in DMX — a
+ * normalized aim would be re-mapped by whatever the pad is doing and miss.
+ *
+ * Optional, and left unset until the operator aims the head at the ball and captures
+ * it. Heads with no aim of their own are simply left alone by the disco fader.
+ */
+export type MoverDiscoBallAim = {
+  pan: DmxValue
+  tilt: DmxValue
+}
+
+/** Centre of both axes — a starting point to aim from, never a usable aim. */
+export function initMoverDiscoBallAim(): MoverDiscoBallAim {
+  return {
+    pan: 128,
+    tilt: 128,
+  }
+}
+
 export type FixtureModelKind =
   | 'auto'
   | 'parCan'
@@ -3981,6 +4005,8 @@ export interface Fixture {
    */
   moverCalibration?: MoverCalibration
   moverBounds?: MoverBounds
+  /** Where this head points to hit the mirror ball. Unset = the disco fader skips it. */
+  moverDiscoBall?: MoverDiscoBallAim
   moverMountOrientation?: MoverMountOrientation
 }
 
@@ -4121,6 +4147,7 @@ export type FlattenedFixture = {
   moverGroup?: string
   moverCalibration?: MoverCalibration
   moverBounds?: MoverBounds
+  moverDiscoBall?: MoverDiscoBallAim
   moverMountOrientation?: MoverMountOrientation
 }
 

@@ -26,6 +26,7 @@ import {
 } from '../../renderer/redux/guiSlice'
 import {
   setGroupBrightness,
+  setGroupDiscoBall,
   setGroupStrobe,
   setMasterBrightness,
 } from '../../renderer/redux/groupControlSlice'
@@ -217,9 +218,12 @@ export function handleMessage(
     } else if (action.type === 'setGroupControl') {
       const control = state.groupControl?.byGroup[action.group]
       if (control === undefined) {
-        return action.control === 'strobe' ? 0 : 1
+        // Released positions: strobe and disco rest at the bottom, brightness at full.
+        return action.control === 'brightness' ? 1 : 0
       }
-      return action.control === 'strobe' ? control.strobe : control.brightness
+      if (action.control === 'strobe') return control.strobe
+      if (action.control === 'discoBall') return control.discoBall
+      return control.brightness
     } else if (action.type === 'setMoverFollowOverridePan') {
       return state.gui.moverFollowOverridePan
     } else if (action.type === 'setMoverFollowOverrideTilt') {
@@ -254,7 +258,9 @@ export function handleMessage(
       dispatch(
         action.control === 'strobe'
           ? setGroupStrobe({ group: action.group, value: bounded })
-          : setGroupBrightness({ group: action.group, value: bounded })
+          : action.control === 'discoBall'
+            ? setGroupDiscoBall({ group: action.group, value: bounded })
+            : setGroupBrightness({ group: action.group, value: bounded })
       )
     } else if (action.type === 'setGroupMasterDimmer') {
       dispatch(setMasterBrightness(bounded))

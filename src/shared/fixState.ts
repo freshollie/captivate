@@ -254,6 +254,29 @@ function normalizeMoverCalibrationValues(calibration: unknown) {
   }
 }
 
+/**
+ * One head's mirror-ball aim, or undefined when it has none.
+ *
+ * Unset is a real state — the disco fader simply skips those heads — so anything
+ * unreadable drops the aim rather than inventing a centred one, which would swing the
+ * head somewhere arbitrary the first time the fader came up.
+ */
+function normalizeMoverDiscoBallValues(aim: unknown) {
+  if (aim === null || aim === undefined || typeof aim !== 'object') {
+    return undefined
+  }
+  const source = aim as { pan?: unknown; tilt?: unknown }
+  const pan = Number(source.pan)
+  const tilt = Number(source.tilt)
+  if (!Number.isFinite(pan) || !Number.isFinite(tilt)) {
+    return undefined
+  }
+  return {
+    pan: clampDmxValue(pan, DMX_MIN_VALUE),
+    tilt: clampDmxValue(tilt, DMX_MIN_VALUE),
+  }
+}
+
 function normalizeMoverBoundsValues(bounds: unknown) {
   const defaults = initMoverBounds()
   const source = (bounds !== null && typeof bounds === 'object'
@@ -890,6 +913,14 @@ export function fixDmxState(dmx: DmxState) {
     if (fixture.moverBounds !== undefined) {
       fixture.moverBounds = normalizeMoverBoundsValues(fixture.moverBounds)
     }
+    if (fixture.moverDiscoBall !== undefined) {
+      const discoBall = normalizeMoverDiscoBallValues(fixture.moverDiscoBall)
+      if (discoBall === undefined) {
+        delete fixture.moverDiscoBall
+      } else {
+        fixture.moverDiscoBall = discoBall
+      }
+    }
     fixture.moverMountOrientation = normalizeMoverMountOrientation(
       fixture.moverMountOrientation
     )
@@ -1326,10 +1357,17 @@ export function fixGroupControlState(
 
     // Live overrides are never restored. Solo, blinder and flash are momentary
     // gestures; a note-off that never arrived would otherwise be written into the
-    // project and reopen the show with the rig blacked out or blinding. Only the
-    // operator's settings — the brightness trim and the flash level — persist.
+    // project and reopen the show with the rig blacked out or blinding. Only what
+    // sits on a fader — the brightness trim, the disco blend and the remembered
+    // flash level — persists.
     next.byGroup[name] = {
       brightness,
+      // A fader position rather than a gesture, so it survives the same way the
+      // brightness trim does: a state push mid-show must not silently hand every
+      // mover back to the scene, and a MIDI fader left up would only put it back.
+      discoBall: Number.isFinite(control.discoBall)
+        ? Math.min(1, Math.max(0, control.discoBall))
+        : 0,
       strobeEnabled: false,
       strobe: 0,
       strobeFlashLevel: flashLevel > 0 ? flashLevel : DEFAULT_STROBE_FLASH_LEVEL,

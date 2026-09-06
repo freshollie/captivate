@@ -9,6 +9,7 @@ import {
   initFixtureRotation,
   initMoverCalibration,
   initMoverBounds,
+  initMoverDiscoBallAim,
   initSubFixture,
   isMoverFixtureType,
   normalizeFixtureModelConfig,
@@ -16,6 +17,7 @@ import {
   SubFixture,
   MoverBounds,
   MoverCalibration,
+  MoverDiscoBallAim,
   MoverMountOrientation,
   DMX_MIN_VALUE,
   DMX_MAX_VALUE,
@@ -506,6 +508,14 @@ function normalizeMoverCalibration(calibration: unknown) {
       rangeDeg: tiltRangeDeg,
       invert: source.tilt?.invert === true,
     },
+  }
+}
+
+function normalizeMoverDiscoBall(aim: MoverDiscoBallAim): MoverDiscoBallAim {
+  const defaults = initMoverDiscoBallAim()
+  return {
+    pan: clampDmxValue(Number(aim.pan), defaults.pan),
+    tilt: clampDmxValue(Number(aim.tilt), defaults.tilt),
   }
 }
 
@@ -1276,6 +1286,31 @@ export const dmxSlice = createSlice({
 
       fixture.moverBounds = normalizeMoverBounds(payload.moverBounds)
     },
+    /**
+     * Where this head has to point to hit the mirror ball. `null` forgets it, which is
+     * how a head opts out of the Groups page disco fader.
+     */
+    setFixtureMoverDiscoBall: (
+      state,
+      {
+        payload,
+      }: PayloadAction<{
+        fixtureId: string
+        moverDiscoBall: MoverDiscoBallAim | null
+      }>
+    ) => {
+      const fixture = state.universe.find((candidate) => candidate.id === payload.fixtureId)
+      if (fixture === undefined) {
+        return
+      }
+
+      if (payload.moverDiscoBall === null) {
+        delete fixture.moverDiscoBall
+        return
+      }
+
+      fixture.moverDiscoBall = normalizeMoverDiscoBall(payload.moverDiscoBall)
+    },
     setFixtureMoverMountOrientation: (
       state,
       {
@@ -1479,6 +1514,7 @@ export const {
   autoNumberMoverPhaseOrder,
   clearMoverPhaseOrder,
   setFixtureMoverBounds,
+  setFixtureMoverDiscoBall,
   setFixtureMoverMountOrientation,
   assignChannelToSubFixture,
   removeChannelFromSubFixtures,

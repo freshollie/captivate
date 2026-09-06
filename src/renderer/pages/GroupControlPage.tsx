@@ -11,6 +11,7 @@ import {
   releaseAllLiveOverrides,
   releaseGroupStrobe,
   setGroupBrightness,
+  setGroupDiscoBall,
   setGroupStrobe,
   setBlinderFadeBeats,
   setGroupFollowMasterHotkeys,
@@ -23,12 +24,18 @@ import {
   toggleGroupStrobeFlash,
 } from '../redux/groupControlSlice'
 import {
+  countDiscoBallAimedFixturesInGroup,
   countFixturesInGroup,
+  DISCO_BALL_DEAD_ZONE,
   effectiveGroupBrightness,
+  groupDiscoBallLevel,
+  groupDiscoBallPosition,
+  groupHasMovers,
   initGroupControl,
   isGroupBrightnessActive,
   isGroupBrightnessForcedFull,
   isGroupControlActive,
+  isGroupDiscoBallActive,
   isGroupOverridingScene,
   type GroupControl,
 } from '../../shared/groupControl'
@@ -84,6 +91,19 @@ export default function GroupControlPage({
     return counts
   }, [groups, flattened])
 
+  // The disco fader only earns its place on cards holding movers, and only says
+  // something useful once those heads have been aimed at the ball.
+  const discoBallByGroup = useMemo(() => {
+    const info: { [group: string]: { hasMovers: boolean; aimedCount: number } } = {}
+    for (const group of groups) {
+      info[group] = {
+        hasMovers: groupHasMovers(flattened, group),
+        aimedCount: countDiscoBallAimedFixturesInGroup(flattened, group),
+      }
+    }
+    return info
+  }, [groups, flattened])
+
   return (
     <Root>
       {!hideStatusBar ? <StatusBar /> : null}
@@ -101,6 +121,8 @@ export default function GroupControlPage({
               key={group}
               group={group}
               fixtureCount={fixtureCountByGroup[group] ?? 0}
+              hasMovers={discoBallByGroup[group]?.hasMovers === true}
+              discoBallAimedCount={discoBallByGroup[group]?.aimedCount ?? 0}
             />
           ))}
         </GroupGrid>
@@ -286,9 +308,15 @@ function MasterBar() {
 function GroupCard({
   group,
   fixtureCount,
+  hasMovers,
+  discoBallAimedCount,
 }: {
   group: string
   fixtureCount: number
+  /** Whether the group holds any pan/tilt head, which is what the disco fader needs. */
+  hasMovers: boolean
+  /** Heads in the group with a mirror-ball aim captured for them. */
+  discoBallAimedCount: number
 }) {
   const dispatch = useDispatch()
   const control: GroupControl = useTypedSelector(
@@ -302,6 +330,10 @@ function GroupCard({
   // fader's resting position, or the readout would contradict the lights.
   const brightnessForcedFull = isGroupBrightnessForcedFull(control)
   const overriding = isGroupOverridingScene(control)
+  // The cap sits where the fader was left; the readout reports what the rig is
+  // actually doing, so a fader parked in the dead zone reads 0%.
+  const discoBallPosition = groupDiscoBallPosition(control)
+  const discoBallLevel = groupDiscoBallLevel(control)
 
   return (
     <Card $active={isActive}>
@@ -395,6 +427,25 @@ function GroupCard({
             dispatch(setGroupStrobe({ group, value: value * DMX_MAX_VALUE }))
           }
         />
+        {hasMovers ? (
+          <Fader
+            label="Disco"
+            readout={`${Math.round(discoBallLevel * 100)}%`}
+            value={discoBallPosition}
+            enabled={isGroupDiscoBallActive(control) && discoBallAimedCount > 0}
+            midiAction={{ type: 'setGroupControl', group, control: 'discoBall' }}
+            tooltip={
+              discoBallAimedCount > 0
+                ? `Pulls this group's movers off the scene's aim and onto the mirror ball: 0% leaves them alone, 100% locks them on it, and anything between sits them proportionally along the way. The gobo and prism clear as soon as it leaves 0; levels and colour stay with the scene. The bottom ${Math.round(
+                    DISCO_BALL_DEAD_ZONE * 100
+                  )}% of the throw is dead, so the heads cannot be swung by a knocked fader. ${discoBallAimedCount} head${
+                    discoBallAimedCount === 1 ? '' : 's'
+                  } aimed at the ball.`
+                : 'No head in this group has been aimed at the mirror ball yet, so this fader does nothing. Open the Movers page, click a fixture, and capture its Disco Ball aim.'
+            }
+            onChange={(value) => dispatch(setGroupDiscoBall({ group, value }))}
+          />
+        ) : null}
       </FaderRow>
 
       <CardFooter>
@@ -503,7 +554,11 @@ function Fader({
   /** Purely cosmetic: whether this fader is currently changing the output. */
   enabled: boolean
   tooltip: string
-  midiAction: { type: 'setGroupControl'; group: string; control: 'brightness' | 'strobe' }
+  midiAction: {
+    type: 'setGroupControl'
+    group: string
+    control: 'brightness' | 'strobe' | 'discoBall'
+  }
   onChange: (value: number) => void
 }) {
   return (

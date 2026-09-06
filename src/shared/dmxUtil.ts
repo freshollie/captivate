@@ -389,7 +389,12 @@ function mapSlotMaxToMidpointDmx(sortedMaxValues: number[]): number[] {
   })
 }
 
-function getIndexedMapSlotOutputDmx(
+/**
+ * Output DMX for one slot of a gobo / prism map — the middle of its range, not its
+ * edge, so a fixture whose slot boundaries are a step off still lands on the gobo
+ * that was asked for.
+ */
+export function getIndexedMapSlotOutputDmx(
   items: Array<{ max: number }>,
   selectedIndex: number
 ): number {
@@ -1512,6 +1517,7 @@ export function flatten_fixture(
       moverGroup,
       moverCalibration,
       moverBounds: fixture.moverBounds,
+      moverDiscoBall: fixture.moverDiscoBall,
       moverMountOrientation: fixture.moverMountOrientation,
     }
   })
@@ -1531,6 +1537,7 @@ export function flatten_fixture(
     moverGroup,
     moverCalibration,
     moverBounds: fixture.moverBounds,
+    moverDiscoBall: fixture.moverDiscoBall,
     moverMountOrientation: fixture.moverMountOrientation,
   })
 

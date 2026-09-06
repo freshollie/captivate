@@ -13,6 +13,7 @@ import StatusBar from '../menu/StatusBar'
 import Input from '../base/Input'
 import NumberField from '../base/NumberField'
 import Checkbox from '../base/LabelledCheckbox'
+import Slider from '../base/Slider'
 import { ButtonMidiOverlay, SliderMidiOverlay } from '../base/MidiOverlay'
 import {
   DMX_MAX_VALUE,
@@ -23,7 +24,9 @@ import {
   MOVER_MAX_TILT_RANGE_DEG,
   MoverBounds,
   MoverCalibration,
+  MoverDiscoBallAim,
   initMoverBounds,
+  initMoverDiscoBallAim,
   MoverMountOrientation,
 } from '../../shared/dmxFixtures'
 import { useDmxSelector, useTypedSelector } from '../redux/store'
@@ -34,6 +37,7 @@ import {
   getMoverPhaseOrderEntries,
   setFixtureMoverBounds,
   setFixtureMoverCalibration,
+  setFixtureMoverDiscoBall,
   setMoverGroupForFixture,
   setMoverPhaseOrderForFixture,
   setFixtureMoverMountOrientation,
@@ -70,6 +74,7 @@ import { PopupTitleRow } from '../base/SectionHelpPopover'
 import {
   BoundCornersHelpButton,
   DanceFloorMapHelpButton,
+  DiscoBallAimHelpButton,
   FollowOverrideHelpButton,
   LivePanTiltGridHelpButton,
   MountOrientationHelpButton,
@@ -244,6 +249,11 @@ export default function MoversPage() {
   )
   const moverAdvancedControlEnabled = useTypedSelector(
     (state) => state.gui.moverAdvancedControlEnabled
+  )
+  // Where the calibration dialog is currently pointing the selected head. The disco
+  // aim is captured from it, so aiming and saving are the same gesture.
+  const moverCalibrationOverride = useTypedSelector(
+    (state) => state.gui.moverCalibrationOverride
   )
 
   const moverPhaseOrderByFixtureId = useDmxSelector(
@@ -440,6 +450,29 @@ export default function MoversPage() {
     const panDmx = preview?.axis === 'pan' ? preview.dmx : nextCalibration.pan.home
     const tiltDmx = preview?.axis === 'tilt' ? preview.dmx : nextCalibration.tilt.home
     setCalibrationOverridePreview(row.fixtureId, panDmx, tiltDmx)
+  }
+
+  /**
+   * Where this head has to point to hit the mirror ball, or `null` to forget it.
+   *
+   * Stored per fixture in raw pan/tilt DMX, the same as the calibration anchors and
+   * the bound corners: the ball hangs in one place and every head reaches it from its
+   * own angle, so there is nothing shareable to put on the fixture type.
+   */
+  function updateMoverDiscoBall(
+    row: MoverFixtureRow,
+    aim: MoverDiscoBallAim | null
+  ) {
+    dispatch(
+      setFixtureMoverDiscoBall({
+        fixtureId: row.fixtureId,
+        moverDiscoBall: aim,
+      })
+    )
+
+    if (aim !== null) {
+      setCalibrationOverridePreview(row.fixtureId, aim.pan, aim.tilt)
+    }
   }
 
   function updateMoverBounds(
@@ -976,6 +1009,31 @@ export default function MoversPage() {
           )}
 
           {calibrationFixtureRow !== null && (
+            <DiscoBallEditor
+              aim={calibrationFixtureRow.fixture.moverDiscoBall}
+              liveAim={
+                moverCalibrationOverride !== null &&
+                moverCalibrationOverride.fixtureId ===
+                  calibrationFixtureRow.fixtureId
+                  ? {
+                      pan: moverCalibrationOverride.panDmx,
+                      tilt: moverCalibrationOverride.tiltDmx,
+                    }
+                  : null
+              }
+              onPreview={(aim) =>
+                setCalibrationOverridePreview(
+                  calibrationFixtureRow.fixtureId,
+                  aim.pan,
+                  aim.tilt
+                )
+              }
+              onSave={(aim) => updateMoverDiscoBall(calibrationFixtureRow, aim)}
+              onClear={() => updateMoverDiscoBall(calibrationFixtureRow, null)}
+            />
+          )}
+
+          {calibrationFixtureRow !== null && (
             <BoundsEditor
               bounds={calibrationFixtureRow.fixture.moverBounds ?? initMoverBounds()}
               onUpdate={(updater, preview) =>
@@ -1251,6 +1309,141 @@ function CalibrationEditor({
         />
       </CalibrationSection>
     </>
+  )
+}
+
+/**
+ * Aim one head at the mirror ball and remember where that was.
+ *
+ * The sliders only move the *preview* — the same live override the rest of this
+ * dialog aims with — and Save is what writes it onto the fixture. Committing on every
+ * drag frame would spray the undo history with a hundred aims nobody asked to keep,
+ * and it would mean a head could not be swept past the ball without saving each step
+ * on the way.
+ */
+function DiscoBallEditor({
+  aim,
+  liveAim,
+  onPreview,
+  onSave,
+  onClear,
+}: {
+  /** The aim saved for this head, or undefined while it has none. */
+  aim: MoverDiscoBallAim | undefined
+  /** Where the dialog is pointing the head right now, if it is pointing it at all. */
+  liveAim: MoverDiscoBallAim | null
+  onPreview: (aim: MoverDiscoBallAim) => void
+  onSave: (aim: MoverDiscoBallAim) => void
+  onClear: () => void
+}) {
+  // Fall back to the saved aim, then to centre, so the sliders always have a handle
+  // to grab even before the head has been pointed anywhere.
+  const current: MoverDiscoBallAim = liveAim ?? aim ?? initMoverDiscoBallAim()
+  const isSaved = aim !== undefined
+  const matchesSaved =
+    isSaved && aim.pan === current.pan && aim.tilt === current.tilt
+
+  function preview(next: Partial<MoverDiscoBallAim>) {
+    onPreview({
+      pan: clampDmxValue(next.pan ?? current.pan),
+      tilt: clampDmxValue(next.tilt ?? current.tilt),
+    })
+  }
+
+  return (
+    <CalibrationSection>
+      <SectionHeader>
+        <SectionTitleRow>
+          <SectionTitle>Disco Ball Aim</SectionTitle>
+          <DiscoBallAimHelpButton />
+        </SectionTitleRow>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={!isSaved}
+          onClick={onClear}
+          title="Forget this head's ball aim — the Groups page Disco fader will skip it"
+        >
+          Clear Aim
+        </Button>
+      </SectionHeader>
+
+      <DialogHint>
+        Sweep the head onto the mirror ball, then save. The Disco fader on the Groups
+        page blends this group&apos;s movers from the scene&apos;s aim onto this one.
+      </DialogHint>
+
+      <AimGrid>
+        <AimSliderRow>
+          <AimSliderLabel>Pan</AimSliderLabel>
+          <AimSliderTrack>
+            <Slider
+              orientation="horizontal"
+              value={current.pan / DMX_MAX_VALUE}
+              onChange={(value) => preview({ pan: value * DMX_MAX_VALUE })}
+              ariaLabel="Disco ball pan aim"
+              title="Sweep pan — the head follows live"
+            />
+          </AimSliderTrack>
+          <NumberField
+            val={current.pan}
+            label="Pan DMX"
+            min={DMX_MIN_VALUE}
+            max={DMX_MAX_VALUE}
+            variant="outlined"
+            highlightOnFocus
+            onChange={(value) => preview({ pan: value })}
+          />
+        </AimSliderRow>
+        <AimSliderRow>
+          <AimSliderLabel>Tilt</AimSliderLabel>
+          <AimSliderTrack>
+            <Slider
+              orientation="horizontal"
+              value={current.tilt / DMX_MAX_VALUE}
+              onChange={(value) => preview({ tilt: value * DMX_MAX_VALUE })}
+              ariaLabel="Disco ball tilt aim"
+              title="Sweep tilt — the head follows live"
+            />
+          </AimSliderTrack>
+          <NumberField
+            val={current.tilt}
+            label="Tilt DMX"
+            min={DMX_MIN_VALUE}
+            max={DMX_MAX_VALUE}
+            variant="outlined"
+            highlightOnFocus
+            onChange={(value) => preview({ tilt: value })}
+          />
+        </AimSliderRow>
+      </AimGrid>
+
+      <AimActions>
+        <Button
+          size="small"
+          variant="contained"
+          disabled={matchesSaved}
+          onClick={() => onSave({ ...current })}
+          title="Save where this head is pointing right now as its ball aim"
+        >
+          {isSaved ? 'Update Aim' : 'Save Aim'}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={!isSaved || matchesSaved}
+          onClick={() => (aim !== undefined ? preview(aim) : undefined)}
+          title="Point the head back at the saved aim"
+        >
+          Show Saved
+        </Button>
+        <AimStatus $set={isSaved}>
+          {isSaved
+            ? `Saved: pan ${aim.pan} / tilt ${aim.tilt}`
+            : 'No aim saved — the Disco fader skips this head'}
+        </AimStatus>
+      </AimActions>
+    </CalibrationSection>
   )
 }
 
@@ -1934,6 +2127,46 @@ const CornerFields = styled.div`
   gap: 0.6rem;
 `
 
+
+const AimGrid = styled.div`
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+`
+
+const AimSliderRow = styled.div`
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr) 7rem;
+  align-items: center;
+  gap: 0.7rem;
+
+  @media (max-width: 1000px) {
+    grid-template-columns: 2.4rem minmax(0, 1fr) 5.5rem;
+  }
+`
+
+const AimSliderLabel = styled.div`
+  font-size: 0.8rem;
+  color: ${(props) => props.theme.colors.text.secondary};
+`
+
+const AimSliderTrack = styled.div`
+  height: 1.6rem;
+  min-width: 0;
+`
+
+const AimActions = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+`
+
+const AimStatus = styled.div<{ $set: boolean }>`
+  font-size: 0.8rem;
+  color: ${(props) =>
+    props.$set ? props.theme.colors.text.primary : props.theme.colors.text.secondary};
+`
 
 const FieldGrid = styled.div`
   display: grid;
