@@ -39,6 +39,13 @@ import TapTempoEngine from './TapTempoEngine'
 import { flatten_fixtures } from '../../shared/dmxUtil'
 import { countSplitRandomizerSlots } from '../../shared/splitRandomizer'
 import { ThrottleMap } from './midiConnection'
+import * as MidiOutput from './midiOutput'
+import {
+  computeMidiFeedbackState,
+  midiFeedbackChanges,
+  MIDI_FEEDBACK_ENABLED,
+} from '../../shared/midiFeedback'
+import { findMidiLedProfile, lampMessage } from '../../shared/midiLedProfile'
 import { MidiMessage, midiInputID } from '../../shared/midi'
 import { getAllParamKeys } from '../../renderer/redux/dmxSlice'
 import { indexArray } from '../../shared/util'
@@ -111,6 +118,60 @@ function syncNodeLinkFromControlState(controlState: CleanReduxState | null) {
     _nodeLink.enableStartStopSync(startStopSync)
   }
 }
+/**
+ * Lamp state last pushed to the controllers, so each pass sends only what changed.
+ *
+ * Kept as bound input ids rather than device addresses: the same state can go to two
+ * controllers that light it at different addresses, and the translation belongs to the
+ * profile, not to this cache.
+ */
+let _midiFeedbackSent = new Map<string, boolean>()
+
+function sendMidiFeedbackChanges(
+  changes: Array<{ inputID: string; lit: boolean }>
+) {
+  if (changes.length === 0) {
+    return
+  }
+  for (const portName of MidiOutput.openOutputPortNames()) {
+    const profile = findMidiLedProfile(portName)
+    if (profile === null) {
+      // A controller with no profile has no lamps we know how to address. Silence is the
+      // only safe thing: a guessed address lights some unrelated pad.
+      continue
+    }
+    for (const change of changes) {
+      const message = lampMessage(profile, change.inputID, change.lit)
+      if (message !== null) {
+        MidiOutput.sendToOutput(portName, message)
+      }
+    }
+  }
+}
+
+function syncMidiFeedback(force = false) {
+  if (!MIDI_FEEDBACK_ENABLED || _controlState === null) {
+    return
+  }
+  const desired = computeMidiFeedbackState(_controlState)
+  sendMidiFeedbackChanges(
+    midiFeedbackChanges(_midiFeedbackSent, desired, force)
+  )
+  _midiFeedbackSent = desired
+}
+
+/** Darken every lamp Captivate lit, so hardware is not left showing a stale state. */
+function clearMidiFeedback() {
+  const changes: Array<{ inputID: string; lit: boolean }> = []
+  for (const [inputID, lit] of _midiFeedbackSent) {
+    if (lit) {
+      changes.push({ inputID, lit: false })
+    }
+  }
+  sendMidiFeedbackChanges(changes)
+  _midiFeedbackSent = new Map()
+}
+
 let _ipcCallbacks: IPC_Callbacks | null = null
 let _controlState: CleanReduxState | null = null
 let _realtimeState: RealtimeState = initRealtimeState()
@@ -609,6 +670,7 @@ export function start(
       if (liveOutputChanged) {
         scheduleLiveOutputFlush()
       }
+      syncMidiFeedback()
     },
     on_group_control_update: (groupControl) => {
       const prevState = _controlState
@@ -620,6 +682,9 @@ export function start(
       _controlState = newState
       telemetryCounter('engine', 'group_control_updates')
       scheduleLiveOutputFlush()
+      // Strobe, blinder, solo and the locks all arrive on this path, so the lamps that
+      // report them have to be refreshed here and not only on a full state update.
+      syncMidiFeedback()
       return newState
     },
     on_user_command: (command) => {
@@ -829,7 +894,15 @@ export function start(
       handleMidiSystemRealtime(status, portName)
     },
     getConnectable: () => {
-      return _controlState ? _controlState.control.device.connectable.midi : []
+      const connectable = _controlState
+        ? _controlState.control.device.connectable.midi
+        : []
+      // Same poll as the inputs: a controller plugged in mid-show gets its lamps set from
+      // a full resend rather than waiting for the next state change to touch one.
+      if (MIDI_FEEDBACK_ENABLED && MidiOutput.updateOutputs(connectable)) {
+        syncMidiFeedback(true)
+      }
+      return connectable
     },
   })
 
@@ -859,6 +932,8 @@ export function stop() {
   telemetryCounter('engine', 'stop')
   telemetryHealth('engine', 'warn', 'Engine stopped')
   clearEngineLoopTimers()
+  clearMidiFeedback()
+  MidiOutput.shutdownMidiOutputs()
   MidiConnection.shutdownMidi()
   try {
     _connectionManager.shutdown()

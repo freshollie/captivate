@@ -22,4 +22,15 @@ declare module 'midi' {
     ) => void
     constructor()
   }
+
+  export class Output {
+    getPortCount: () => number
+    getPortName: (portIndex: number) => string
+    openPort: (portIndex: number) => void
+    closePort: () => void
+    isPortOpen: () => boolean
+    /** Raw MIDI bytes, e.g. [0x90, 40, 127] for note-on. */
+    sendMessage: (message: number[]) => void
+    constructor()
+  }
 }
