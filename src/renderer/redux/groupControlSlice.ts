@@ -36,6 +36,23 @@ function clearStrobe(control: GroupControl): void {
   control.strobeLocked = false
 }
 
+/**
+ * Everything that has to come down when the wheels go back to the scene.
+ *
+ * The gobo fader drops to open with the override, so the card and the rig agree: a
+ * released group is showing the scene's gobo, and a fader left parked on Breakup would
+ * claim otherwise — and would put Breakup back on the rig the instant it was nudged.
+ * Open is also the only value that is never a surprise to re-arm into.
+ *
+ * The prism and rotation faders keep their positions. They arm nothing on their own,
+ * so a parked one cannot do anything on its own either, and they are the slower
+ * settings of the three — worth keeping dialled between looks.
+ */
+function clearWheelOverride(control: GroupControl): void {
+  control.goboEnabled = false
+  control.gobo = 0
+}
+
 /** Everything that has to come down when a solo is handed back. */
 function clearExclusive(control: GroupControl): void {
   control.exclusiveEnabled = false
@@ -77,12 +94,13 @@ function lockHeldControls(control: GroupControl): boolean {
 /**
  * What Release does when it is not being used as a lock modifier.
  *
- * The strobe goes back to the scene, and any *locked* solo or blinder comes down with
- * it — a lock has no other way down from this card. Ones merely held or latched are
+ * The strobe and the wheel override go back to the scene, and any *locked* solo or
+ * blinder comes down with them — a lock has no other way down from this card. Ones merely held or latched are
  * left alone, as they always have been; that is what Release all is for.
  */
 function releaseGroup(control: GroupControl): void {
   clearStrobe(control)
+  clearWheelOverride(control)
   if (control.exclusiveLocked === true) clearExclusive(control)
   if (control.blinderLocked === true) clearBlinder(control)
 }
@@ -131,6 +149,43 @@ export const groupControlSlice = createSlice({
       { payload }: PayloadAction<{ group: string; value: number }>
     ) => {
       controlFor(state, payload.group).discoBall = clamp01(payload.value)
+    },
+    /**
+     * Pick the group's gobo — and arm the wheel override by doing so.
+     *
+     * Moving the fader *is* the arming gesture, because there is no released position
+     * to rest at: gobo 0 is a real slot, so a fader sitting at the bottom cannot mean
+     * "leave the scene alone". Release, Release all and the next light scene hand the
+     * wheels back and drop this fader to open with them.
+     */
+    setGroupGobo: (
+      state,
+      { payload }: PayloadAction<{ group: string; value: number }>
+    ) => {
+      const control = controlFor(state, payload.group)
+      control.gobo = clamp01(payload.value)
+      control.goboEnabled = true
+    },
+    /**
+     * Prism slot fired by the wheel override.
+     *
+     * Deliberately does not arm: it is one third of a beam look, and a look picked
+     * from the prism alone with the gobo left wherever it was parked is not one anyone
+     * asked for. Dialling it with the override down is fine and changes nothing on the
+     * wire until the Gobo fader arms it.
+     */
+    setGroupPrism: (
+      state,
+      { payload }: PayloadAction<{ group: string; value: number }>
+    ) => {
+      controlFor(state, payload.group).prism = clamp01(payload.value)
+    },
+    /** Prism rotation fired by the wheel override. Does not arm; see `setGroupPrism`. */
+    setGroupPrismSpeed: (
+      state,
+      { payload }: PayloadAction<{ group: string; value: number }>
+    ) => {
+      controlFor(state, payload.group).prismSpeed = clamp01(payload.value)
     },
     /**
      * Trims a strobe that is already live, and does nothing otherwise.
@@ -201,8 +256,8 @@ export const groupControlSlice = createSlice({
     },
     /**
      * A Release with no hold to report — an on-screen click, a keyboard chord. Hands
-     * this group's strobe back to the scene, or, if a pad is held, locks that pad's
-     * control on instead so it survives the pad coming up.
+     * this group's strobe and wheels back to the scene, or, if a pad is held, locks
+     * that pad's control on instead so it survives the pad coming up.
      *
      * Doubling up on Release keeps the gesture to two pads and reads the right way
      * round: the button that ends an override is the one that decides it should stay.
@@ -258,6 +313,7 @@ export const groupControlSlice = createSlice({
       for (const control of Object.values(state.byGroup)) {
         if (control === undefined) continue
         clearStrobe(control)
+        clearWheelOverride(control)
         clearExclusive(control)
         clearBlinder(control)
         // A Release pad whose note-off never arrived would silently turn every later
@@ -395,7 +451,8 @@ export const groupControlSlice = createSlice({
   extraReducers: (builder) => {
     /**
      * A lock is a decision about the look being played, so a new light scene drops
-     * every one of them — strobe, solo and blinder alike.
+     * every one of them — strobe, solo and blinder alike — and the wheel override
+     * goes with them, being a decision about the look in exactly the same way.
      *
      * This replaces an older rule that released the *strobe* on every scene change.
      * That existed because the fader used to arm the strobe, so one could be left up
@@ -411,6 +468,9 @@ export const groupControlSlice = createSlice({
       if (sceneType !== 'light') return
       for (const control of Object.values(state.byGroup)) {
         if (control === undefined) continue
+        // No pad holds the wheels, so there is no held-versus-locked case to weigh:
+        // the new scene's gobos are what the operator asked for by changing scene.
+        clearWheelOverride(control)
         if (control.strobeFlashHeld === true) {
           control.strobeLocked = false
         } else if (control.strobeLocked === true) {
@@ -443,6 +503,9 @@ export const {
   replaceGroupControlState,
   setGroupBrightness,
   setGroupDiscoBall,
+  setGroupGobo,
+  setGroupPrism,
+  setGroupPrismSpeed,
   setGroupStrobe,
   setGroupStrobeFlash,
   toggleGroupStrobeFlash,

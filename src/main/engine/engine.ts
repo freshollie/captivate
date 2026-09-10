@@ -682,8 +682,9 @@ export function start(
       _controlState = newState
       telemetryCounter('engine', 'group_control_updates')
       scheduleLiveOutputFlush()
-      // Strobe, blinder, solo and the locks all arrive on this path, so the lamps that
-      // report them have to be refreshed here and not only on a full state update.
+      // Strobe, blinder, solo, the wheel override and the locks all arrive on this
+      // path, so the lamps that report them have to be refreshed here and not only on
+      // a full state update.
       syncMidiFeedback()
       return newState
     },

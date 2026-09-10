@@ -1320,6 +1320,13 @@ export function fixMixerState(mixerState: MixerState) {
  * has hand-edited. Anything unusable is dropped rather than carried into the engine,
  * where a stray NaN would ride straight out to a light.
  */
+/** A stored 0..1 fader setting, or 0 for anything unreadable. */
+function clamp01Setting(value: unknown): number {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.min(1, Math.max(0, numeric))
+}
+
 export function fixGroupControlState(
   state: CleanReduxState
 ): void {
@@ -1368,6 +1375,15 @@ export function fixGroupControlState(
       discoBall: Number.isFinite(control.discoBall)
         ? Math.min(1, Math.max(0, control.discoBall))
         : 0,
+      // The wheel override itself is live state and never comes back armed — a
+      // project must not reopen with every head forced onto a gobo — and the gobo
+      // fader loads at open to match, exactly as a release leaves it. The prism
+      // settings it fires at are the operator's, so those do come back, the same way
+      // the strobe's flash level outlives the strobe.
+      goboEnabled: false,
+      gobo: 0,
+      prism: clamp01Setting(control.prism),
+      prismSpeed: clamp01Setting(control.prismSpeed),
       strobeEnabled: false,
       strobe: 0,
       strobeFlashLevel: flashLevel > 0 ? flashLevel : DEFAULT_STROBE_FLASH_LEVEL,

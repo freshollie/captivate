@@ -12,6 +12,9 @@ import {
   releaseGroupStrobe,
   setGroupBrightness,
   setGroupDiscoBall,
+  setGroupGobo,
+  setGroupPrism,
+  setGroupPrismSpeed,
   setGroupStrobe,
   setBlinderFadeBeats,
   setGroupFollowMasterHotkeys,
@@ -26,6 +29,7 @@ import {
 import {
   countDiscoBallAimedFixturesInGroup,
   countFixturesInGroup,
+  describeGroupWheels,
   DISCO_BALL_DEAD_ZONE,
   effectiveGroupBrightness,
   groupDiscoBallLevel,
@@ -37,9 +41,13 @@ import {
   isGroupControlActive,
   isGroupDiscoBallActive,
   isGroupOverridingScene,
+  wheelSlotIndex,
   type GroupControl,
+  type GroupWheel,
+  type GroupWheelSupport,
 } from '../../shared/groupControl'
 import { flatten_fixtures, getSortedGroupsFromPlacedFixtures } from '../../shared/dmxUtil'
+import type { SetGroupControlKind } from '../redux/deviceState'
 import { DMX_MAX_VALUE, universeHasMovers } from '../../shared/dmxFixtures'
 
 const FADER_RADIUS_REM = 0.5
@@ -51,6 +59,19 @@ const BLINDER_FADE_OPTIONS = [0, 0.25, 0.5, 1, 2, 4, 8]
  * one per selector call makes every untouched card re-render on every store action.
  */
 const EMPTY_GROUP_CONTROL: GroupControl = Object.freeze(initGroupControl())
+
+/** MIDI binding for one fader on a group card. */
+type MidiFaderAction = {
+  type: 'setGroupControl'
+  group: string
+  control: SetGroupControlKind
+}
+/** Same stable-reference reasoning as `EMPTY_GROUP_CONTROL`. */
+const EMPTY_WHEELS: GroupWheelSupport = Object.freeze({
+  gobo: { slotCount: 0, labels: [] },
+  prism: { slotCount: 0, labels: [] },
+  hasPrismSpeed: false,
+})
 
 export default function GroupControlPage({
   hideStatusBar = false,
@@ -104,6 +125,16 @@ export default function GroupControlPage({
     return info
   }, [groups, flattened])
 
+  // Wheel faders appear only where there is a wheel to turn, so a card of pars keeps
+  // the two faders it has always had.
+  const wheelsByGroup = useMemo(() => {
+    const info: { [group: string]: GroupWheelSupport } = {}
+    for (const group of groups) {
+      info[group] = describeGroupWheels(flattened, group)
+    }
+    return info
+  }, [groups, flattened])
+
   return (
     <Root>
       {!hideStatusBar ? <StatusBar /> : null}
@@ -123,6 +154,7 @@ export default function GroupControlPage({
               fixtureCount={fixtureCountByGroup[group] ?? 0}
               hasMovers={discoBallByGroup[group]?.hasMovers === true}
               discoBallAimedCount={discoBallByGroup[group]?.aimedCount ?? 0}
+              wheels={wheelsByGroup[group] ?? EMPTY_WHEELS}
             />
           ))}
         </GroupGrid>
@@ -310,6 +342,7 @@ function GroupCard({
   fixtureCount,
   hasMovers,
   discoBallAimedCount,
+  wheels,
 }: {
   group: string
   fixtureCount: number
@@ -317,6 +350,8 @@ function GroupCard({
   hasMovers: boolean
   /** Heads in the group with a mirror-ball aim captured for them. */
   discoBallAimedCount: number
+  /** Gobo / prism wheels the group's fixtures carry, for the second fader row. */
+  wheels: GroupWheelSupport
 }) {
   const dispatch = useDispatch()
   const control: GroupControl = useTypedSelector(
@@ -326,6 +361,16 @@ function GroupCard({
   const isActive = isGroupControlActive(control)
   const locked =
     control.strobeLocked || control.exclusiveLocked || control.blinderLocked
+  const wheelsArmed = control.goboEnabled === true
+  // Bright and Strobe are always there; everything else depends on what the group
+  // holds. The card widens per fader rather than stacking a second row, so every
+  // fader keeps a usable column and a card of pars stays the size it always was.
+  const faderCount =
+    2 +
+    (hasMovers ? 1 : 0) +
+    (wheels.gobo.slotCount > 0 ? 1 : 0) +
+    (wheels.prism.slotCount > 0 ? 1 : 0) +
+    (wheels.hasPrismSpeed ? 1 : 0)
   // Flash / Excl pull the group up to full while held; show that rather than the
   // fader's resting position, or the readout would contradict the lights.
   const brightnessForcedFull = isGroupBrightnessForcedFull(control)
@@ -336,7 +381,7 @@ function GroupCard({
   const discoBallLevel = groupDiscoBallLevel(control)
 
   return (
-    <Card $active={isActive}>
+    <Card $active={isActive} $faderCount={faderCount}>
       <CardHeader>
         <GroupName title={group}>
           {group}
@@ -446,6 +491,43 @@ function GroupCard({
             onChange={(value) => dispatch(setGroupDiscoBall({ group, value }))}
           />
         ) : null}
+        {wheels.gobo.slotCount > 0 ? (
+          <WheelFader
+            label="Gobo"
+            wheel={wheels.gobo}
+            value={control.gobo}
+            armed={wheelsArmed}
+            midiAction={{ type: 'setGroupControl', group, control: 'gobo' }}
+            tooltip="Takes this group's wheels off the scene and picks the gobo itself. Moving this fader is what arms the override — there is no released position, because the bottom slot is a real gobo — and Release, Release all or the next light scene hands the wheels back and drops this fader to open. The Prism and Spin faders beside it fire with it, and keep their positions when it is released."
+            onChange={(value) => dispatch(setGroupGobo({ group, value }))}
+          />
+        ) : null}
+        {wheels.prism.slotCount > 0 ? (
+          <WheelFader
+            label="Prism"
+            wheel={wheels.prism}
+            value={control.prism}
+            armed={wheelsArmed}
+            midiAction={{ type: 'setGroupControl', group, control: 'prism' }}
+            tooltip="Prism the wheel override fires at. It sets the value rather than arming anything, so dial it whenever you like — bracketed while the override is down, and live the moment the Gobo fader arms it."
+            onChange={(value) => dispatch(setGroupPrism({ group, value }))}
+          />
+        ) : null}
+        {wheels.hasPrismSpeed ? (
+          <Fader
+            label="Spin"
+            readout={
+              wheelsArmed
+                ? `${Math.round(control.prismSpeed * 100)}%`
+                : `(${Math.round(control.prismSpeed * 100)}%)`
+            }
+            value={control.prismSpeed}
+            enabled={wheelsArmed}
+            midiAction={{ type: 'setGroupControl', group, control: 'prismSpeed' }}
+            tooltip="Prism rotation the wheel override fires at, across whatever the fixture's prism rotation channel covers. Like the Prism fader it only sets the value — the Gobo fader is what puts it on the rig."
+            onChange={(value) => dispatch(setGroupPrismSpeed({ group, value }))}
+          />
+        ) : null}
       </FaderRow>
 
       <CardFooter>
@@ -501,7 +583,7 @@ function GroupCard({
         <ButtonMidiOverlay action={{ type: 'releaseGroupStrobe', group }}>
           <BriefTooltip title={releaseTooltip(control)}>
             <ReleaseButton
-              $armed={control.strobeEnabled || locked}
+              $armed={control.strobeEnabled || wheelsArmed || locked}
               $locked={locked}
               size="small"
               onClick={() => dispatch(releaseGroupStrobe(group))}
@@ -535,7 +617,57 @@ function releaseTooltip(control: GroupControl): string {
   if (lockedNames.length > 0) {
     return `${formatList(lockedNames)} locked on: still up with the pad let go. Tap to unlock and hand it back — or hold this and press another pad to add that one to the lock.`
   }
+  if (control.goboEnabled === true) {
+    return "Tap to hand this group's wheels and strobe back to the scene — the gobo goes back to whatever the scene is playing and the Gobo fader drops to open, while Prism and Spin keep their positions. Held on a pad it locks instead: anything pressed while it is down locks on, as does anything already held when you tap it. Assignable to a MIDI pad."
+  }
   return "Tap to release this group's strobe back to the scene. Held on a pad it locks instead: anything pressed while it is down locks on, as does anything already held when you tap it. Assignable to a MIDI pad."
+}
+
+/**
+ * A fader that lands on wheel slots rather than anywhere in its travel.
+ *
+ * Detented like the scene's own gobo and prism faders — the cap snaps to the nearest
+ * slot and the readout names it, because "40%" says nothing about which gobo is in
+ * the gate. Bracketed while the override is down, the way the strobe fader parks at
+ * the level Flash will fire at.
+ */
+function WheelFader({
+  label,
+  wheel,
+  value,
+  armed,
+  tooltip,
+  midiAction,
+  onChange,
+}: {
+  label: string
+  wheel: GroupWheel
+  /** Raw 0..1 fader value; snapped to a slot for display. */
+  value: number
+  /** Whether the wheel override is up, so this is reaching the rig. */
+  armed: boolean
+  tooltip: string
+  midiAction: MidiFaderAction
+  onChange: (value: number) => void
+}) {
+  const index = wheelSlotIndex(value, wheel.slotCount)
+  const snapped = wheel.slotCount > 1 ? index / (wheel.slotCount - 1) : 0
+  const name = wheel.labels[index] ?? `${label} ${index + 1}`
+
+  return (
+    <Fader
+      label={label}
+      readout={armed ? name : `(${name})`}
+      value={snapped}
+      enabled={armed}
+      tooltip={tooltip}
+      midiAction={midiAction}
+      onChange={(next) => {
+        const nextIndex = wheelSlotIndex(next, wheel.slotCount)
+        onChange(wheel.slotCount > 1 ? nextIndex / (wheel.slotCount - 1) : 0)
+      }}
+    />
+  )
 }
 
 function Fader({
@@ -554,11 +686,7 @@ function Fader({
   /** Purely cosmetic: whether this fader is currently changing the output. */
   enabled: boolean
   tooltip: string
-  midiAction: {
-    type: 'setGroupControl'
-    group: string
-    control: 'brightness' | 'strobe' | 'discoBall'
-  }
+  midiAction: MidiFaderAction
   onChange: (value: number) => void
 }) {
   return (
@@ -586,7 +714,9 @@ function Fader({
           </SliderBase>
         </FaderTrack>
       </SliderMidiOverlay>
-      <Readout $enabled={enabled}>{readout}</Readout>
+      <Readout $enabled={enabled} title={readout}>
+        {readout}
+      </Readout>
     </FaderCol>
   )
 }
@@ -782,8 +912,24 @@ const GroupGrid = styled.div`
   scrollbar-color: #7a7a7a33 #0000;
 `
 
-const Card = styled.div<{ $active: boolean }>`
-  width: 12.5rem;
+/** Column each fader needs to keep its label, cap and readout legible. */
+const FADER_COLUMN_REM = 3.2
+const FADER_GAP_REM = 0.4
+const CARD_PADDING_REM = 1
+const CARD_MIN_WIDTH_REM = 12.5
+
+function cardWidthRem(faderCount: number): number {
+  const faders = Math.max(1, faderCount)
+  const width = Math.max(
+    CARD_MIN_WIDTH_REM,
+    CARD_PADDING_REM + faders * FADER_COLUMN_REM + (faders - 1) * FADER_GAP_REM
+  )
+  // Rounded so the emitted CSS is not 22.200000000000003rem.
+  return Math.round(width * 100) / 100
+}
+
+const Card = styled.div<{ $active: boolean; $faderCount: number }>`
+  width: ${(p) => cardWidthRem(p.$faderCount)}rem;
   height: 17.5rem;
   display: flex;
   flex-direction: column;
@@ -835,7 +981,7 @@ const FaderRow = styled.div`
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 0.4rem;
+  gap: ${FADER_GAP_REM}rem;
 `
 
 const FaderCol = styled.div`
@@ -880,6 +1026,11 @@ const FaderCap = styled.div<{ $enabled: boolean }>`
 const Readout = styled.div<{ $enabled: boolean }>`
   font-size: 0.72rem;
   color: ${(p) => (p.$enabled ? '#e8ffe9' : p.theme.colors.text.secondary)};
+  /* Gobo and prism readouts are slot names, which can be longer than the column. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `
 
 const CardFooter = styled.div`

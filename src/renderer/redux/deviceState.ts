@@ -90,8 +90,11 @@ export function getSetBaseParamSplitIndex(action: SetBaseParam): number {
 interface SetGroupControl {
   type: 'setGroupControl'
   group: string
-  control: 'brightness' | 'strobe' | 'discoBall'
+  control: 'brightness' | 'strobe' | 'discoBall' | 'gobo' | 'prism' | 'prismSpeed'
 }
+
+/** Which fader on a Groups-page card an action drives. */
+export type SetGroupControlKind = SetGroupControl['control']
 
 /** Solo a group. Momentary under MIDI: held while the pad is down. */
 interface SetGroupExclusive {

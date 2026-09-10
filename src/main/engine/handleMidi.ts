@@ -9,6 +9,7 @@ import {
   SliderAction,
   SliderControlOptions,
   MidiAction,
+  type SetGroupControlKind,
   initSliderOptions,
   normalizeSliderOptionsForAction,
 } from '../../renderer/redux/deviceState'
@@ -27,6 +28,9 @@ import {
 import {
   setGroupBrightness,
   setGroupDiscoBall,
+  setGroupGobo,
+  setGroupPrism,
+  setGroupPrismSpeed,
   setGroupStrobe,
   setMasterBrightness,
 } from '../../renderer/redux/groupControlSlice'
@@ -34,6 +38,29 @@ import NodeLink from 'node-link'
 import { PayloadAction } from '@reduxjs/toolkit'
 
 const buttonThresholdState = new Map<string, boolean>()
+
+/** The slice action one Groups-page fader dispatches. */
+function groupControlSliderAction(
+  control: SetGroupControlKind,
+  group: string,
+  value: number
+): PayloadAction<{ group: string; value: number }> {
+  const payload = { group, value }
+  switch (control) {
+    case 'strobe':
+      return setGroupStrobe(payload)
+    case 'discoBall':
+      return setGroupDiscoBall(payload)
+    case 'gobo':
+      return setGroupGobo(payload)
+    case 'prism':
+      return setGroupPrism(payload)
+    case 'prismSpeed':
+      return setGroupPrismSpeed(payload)
+    default:
+      return setGroupBrightness(payload)
+  }
+}
 
 interface MidiInput {
   id: string
@@ -223,6 +250,9 @@ export function handleMessage(
       }
       if (action.control === 'strobe') return control.strobe
       if (action.control === 'discoBall') return control.discoBall
+      if (action.control === 'gobo') return control.gobo
+      if (action.control === 'prism') return control.prism
+      if (action.control === 'prismSpeed') return control.prismSpeed
       return control.brightness
     } else if (action.type === 'setMoverFollowOverridePan') {
       return state.gui.moverFollowOverridePan
@@ -255,13 +285,7 @@ export function handleMessage(
         })
       )
     } else if (action.type === 'setGroupControl') {
-      dispatch(
-        action.control === 'strobe'
-          ? setGroupStrobe({ group: action.group, value: bounded })
-          : action.control === 'discoBall'
-            ? setGroupDiscoBall({ group: action.group, value: bounded })
-            : setGroupBrightness({ group: action.group, value: bounded })
-      )
+      dispatch(groupControlSliderAction(action.control, action.group, bounded))
     } else if (action.type === 'setGroupMasterDimmer') {
       dispatch(setMasterBrightness(bounded))
     } else if (action.type === 'setBpm') {

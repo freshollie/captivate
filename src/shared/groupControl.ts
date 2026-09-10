@@ -42,6 +42,19 @@ import { inferColorKind } from './dmxColors'
  *   The bottom tenth of its travel is dead, because unlike the other two faders this
  *   one moves the rig physically: a knock, or a controller spilling fader positions
  *   when it connects, must not start swinging heads across the room.
+ * - **Gobo is an override that arms on touch, and carries the prism with it.** Like
+ *   the strobe it replaces a scene value outright rather than scaling one, so it
+ *   needs an explicit release; unlike the strobe there is no pad to arm it, so moving
+ *   the fader is what does. While it is up the group's wheels are the operator's: the
+ *   gobo, prism and prism-rotation faders drive them together, since a beam look is
+ *   the three of them at once and picking a gobo with the prism left wherever the
+ *   scene had it is not a look anyone asks for.
+ *
+ *   The prism and rotation faders are settings for that override, not overrides of
+ *   their own: they can be dialled with it down — the readouts bracket to say so —
+ *   and nothing reaches the rig until the gobo fader arms it. Release hands all three
+ *   back and drops the gobo fader to open, and so does the next light scene, which is
+ *   what stops a beam look from quietly outliving the look it was built for.
  */
 export interface GroupControl {
   /** 0..1, multiplied into the scene's level. 1 = no change. Always applied. */
@@ -62,6 +75,28 @@ export interface GroupControl {
    * entirely.
    */
   discoBall: number
+  /**
+   * Whether the group's wheels are on the operator rather than the scene.
+   *
+   * Armed by moving the Gobo fader — there is no pad for it — and cleared by Release,
+   * by Release all, or by the next light scene. It has to be armed rather than always
+   * live because there is no released position: gobo 0 is a real slot (Open), so a
+   * fader resting at the bottom would be a permanent "force every head open".
+   */
+  goboEnabled: boolean
+  /**
+   * 0..1 across the gobo wheel, mapped to a slot the same way a scene's `gobo` param
+   * is: nearest of `count` evenly spaced detents. Fixtures with different wheels each
+   * resolve it against their own slot list, so one fader reaches a mixed rig.
+   *
+   * Only ever non-zero while {@link goboEnabled} is up: every release drops it back to
+   * open, so a disarmed card reads the way the rig looks.
+   */
+  gobo: number
+  /** 0..1 across the prism wheel, resolved to a slot like {@link gobo}. */
+  prism: number
+  /** 0..1 across the prism rotation channel. 0 = stopped on most heads. */
+  prismSpeed: number
   /**
    * Armed by Flash — never by the fader — and cleared by Release, by letting go of an
    * unlocked flash, or, if it was locked, by a light-scene change.
@@ -347,6 +382,10 @@ export function initGroupControl(): GroupControl {
   return {
     brightness: 1,
     discoBall: 0,
+    goboEnabled: false,
+    gobo: 0,
+    prism: 0,
+    prismSpeed: 0,
     strobeEnabled: false,
     strobe: 0,
     strobeFlashLevel: DEFAULT_STROBE_FLASH_LEVEL,
@@ -522,6 +561,7 @@ export function isGroupControlActive(
     isGroupOverridingScene(control) ||
     isGroupBrightnessActive(control) ||
     isGroupDiscoBallActive(control) ||
+    control.goboEnabled === true ||
     control.strobeEnabled === true ||
     control.exclusiveEnabled === true ||
     control.blinderActive === true
@@ -1086,6 +1126,109 @@ function applyDiscoBallAim(
   }
 }
 
+/** Nearest slot for a 0..1 fader across `count` evenly spaced detents. */
+export function wheelSlotIndex(value: number, count: number): number {
+  if (count <= 1) return 0
+  return Math.min(count - 1, Math.max(0, Math.round(clamp01(value) * (count - 1))))
+}
+
+/**
+ * True for a custom channel that spins the prism rather than selecting one.
+ *
+ * Prism rotation has no channel type of its own — profiles carry it as a named custom
+ * channel — so it has to be found by name, the same way the Atmosphere group finds
+ * its fog and haze channels.
+ */
+function isPrismRotationChannel(channel: FixtureChannel): boolean {
+  if (channel.type !== 'custom') return false
+  const name = channel.name.trim().toLowerCase()
+  if (!name.includes('prism')) return false
+  return ['rot', 'spin', 'speed'].some((token) => name.includes(token))
+}
+
+/**
+ * DMX this channel should carry while the group's wheel override is up, or null if it
+ * drives no wheel.
+ *
+ * On a `split` channel the first range any of the three faders can address wins.
+ * Profiles list ranges in DMX order, so on a channel carrying both prism slots and
+ * prism rotation the slot selection is what the override reaches — the same single
+ * choice the fixture itself forces on anyone driving that channel.
+ */
+function overrideWheelValueOf(
+  channel: FixtureChannel,
+  control: GroupControl
+): number | null {
+  if (channel.type === 'goboMap') {
+    if (channel.gobos.length <= 0) return null
+    return getIndexedMapSlotOutputDmx(
+      channel.gobos,
+      wheelSlotIndex(control.gobo, channel.gobos.length)
+    )
+  }
+  if (channel.type === 'prismMap') {
+    if (channel.prisms.length <= 0) return null
+    return getIndexedMapSlotOutputDmx(
+      channel.prisms,
+      wheelSlotIndex(control.prism, channel.prisms.length)
+    )
+  }
+  if (isPrismRotationChannel(channel) && channel.type === 'custom') {
+    return channel.min + (channel.max - channel.min) * clamp01(control.prismSpeed)
+  }
+  if (channel.type === 'split') {
+    for (const range of channel.ranges) {
+      const nested = overrideWheelValueOf(range.channel, control)
+      if (nested === null) continue
+      return Math.min(range.max, Math.max(range.min, nested))
+    }
+  }
+  return null
+}
+
+/**
+ * Hand a group's gobo, prism and prism rotation to the operator's faders.
+ *
+ * Written last of the wheel writers, so an armed override beats the disco fader's
+ * automatic clear: pulling heads onto the ball opens their gobos on its own, but an
+ * operator who has explicitly dialled a gobo has said what they want and gets it,
+ * ball or no ball.
+ *
+ * A fixture sitting in two armed groups follows the first by name. There is no
+ * meaningful way to merge two wheel selections the way overlapping brightness faders
+ * merge — a wheel is on one slot or another — so the rule is simply stable.
+ */
+function applyWheelOverride(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): void {
+  const byGroup = safeByGroup(groupControl)
+  const armedGroups = Object.keys(byGroup)
+    .filter((group) => byGroup[group]?.goboEnabled === true)
+    .sort()
+  if (armedGroups.length === 0) return
+
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, armedGroups)
+  const controlByFixture = new Map<FlattenedFixture, GroupControl>()
+
+  for (const group of armedGroups) {
+    const control = byGroup[group]
+    if (control === null || control === undefined) continue
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
+      if (!controlByFixture.has(fixture)) controlByFixture.set(fixture, control)
+    }
+  }
+
+  for (const [fixture, control] of controlByFixture) {
+    for (const [channelIdx, channel] of fixture.channels) {
+      const value = overrideWheelValueOf(channel, control)
+      if (value === null) continue
+      writeChannel(channels, channelIdx, value)
+    }
+  }
+}
+
 /**
  * Drive a group to white, overriding whatever the scene put on the wire.
  *
@@ -1364,10 +1507,83 @@ export function applyGroupControlsToUniverse(
     options.calibratingFixtureId
   )
 
+  // Last of the wheel writers, so a dialled gobo survives the disco fader's clear.
+  applyWheelOverride(channels, universeFixtures, groupControl)
+
   // Solo wins over any level the faders above just set...
   applyExclusiveBlackout(channels, universeFixtures, groupControl)
   // ...and the blinder wins over everything, including a solo blackout.
   applyBlinder(channels, universeFixtures, groupControl, blinderLevels)
+}
+
+/** One wheel a group's fixtures carry, and what its slots are called. */
+export interface GroupWheel {
+  /** Slots on the widest wheel in the group, or 0 when no fixture has one. */
+  slotCount: number
+  /** Slot names off that same wheel, for the fader readout. */
+  labels: string[]
+}
+
+/** What the wheel override can reach on one group, for laying out its card. */
+export interface GroupWheelSupport {
+  gobo: GroupWheel
+  prism: GroupWheel
+  /** Whether any fixture carries a prism rotation channel. */
+  hasPrismSpeed: boolean
+}
+
+function emptyWheel(): GroupWheel {
+  return { slotCount: 0, labels: [] }
+}
+
+function readWheelSlots(
+  wheel: GroupWheel,
+  items: Array<{ name: string }>,
+  fallbackPrefix: string
+): void {
+  // Widest wheel wins, matching the scene's gobo and prism faders: a fader with a
+  // detent per slot has to have one for every slot some fixture in the group can
+  // reach, and narrower wheels resolve the same 0..1 against their own list.
+  if (items.length <= wheel.slotCount) return
+  wheel.slotCount = items.length
+  wheel.labels = items.map((item, index) => {
+    const name = item.name.trim()
+    return name.length > 0 ? name : `${fallbackPrefix} ${index + 1}`
+  })
+}
+
+function collectWheels(channel: FixtureChannel, support: GroupWheelSupport): void {
+  if (channel.type === 'goboMap') {
+    readWheelSlots(support.gobo, channel.gobos, 'Gobo')
+    return
+  }
+  if (channel.type === 'prismMap') {
+    readWheelSlots(support.prism, channel.prisms, 'Prism')
+    return
+  }
+  if (isPrismRotationChannel(channel)) {
+    support.hasPrismSpeed = true
+    return
+  }
+  if (channel.type === 'split') {
+    for (const range of channel.ranges) collectWheels(range.channel, support)
+  }
+}
+
+/** Which wheel faders a group's card should show, and how they are labelled. */
+export function describeGroupWheels(
+  fixtures: FlattenedFixture[],
+  group: string
+): GroupWheelSupport {
+  const support: GroupWheelSupport = {
+    gobo: emptyWheel(),
+    prism: emptyWheel(),
+    hasPrismSpeed: false,
+  }
+  for (const fixture of getFixturesInGroups(fixtures, { [group]: true })) {
+    for (const [, channel] of fixture.channels) collectWheels(channel, support)
+  }
+  return support
 }
 
 /**

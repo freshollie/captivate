@@ -36,23 +36,34 @@ function exclusiveActive(control: GroupControl | undefined): boolean {
 }
 
 /**
- * Release lights when it has something to release — that is, when this group is holding
- * a lock. Not while merely held down: held, Release is the lock *modifier*, and lighting
- * it then would say something is locked when the gesture has not locked anything yet.
+ * Release lights when it has something to release: a lock standing on this group, or a
+ * wheel override armed on it.
+ *
+ * Both outlive the gesture that started them — a lock survives its pad coming up, and
+ * the wheel override has no pad at all — so the lamp is the only thing on the surface
+ * saying the group is still off the scene.
+ *
+ * Not lit while Release is merely held down: held, Release is the lock *modifier*, and
+ * lighting it then would claim something is standing when the gesture has not put
+ * anything there yet. Momentary controls are left out for the same reason — their own
+ * pad is lit while a hand is on it.
  */
-function holdsLock(control: GroupControl | undefined): boolean {
+function hasReleasableOverride(control: GroupControl | undefined): boolean {
   return (
     control?.strobeLocked === true ||
     control?.blinderLocked === true ||
-    control?.exclusiveLocked === true
+    control?.exclusiveLocked === true ||
+    control?.goboEnabled === true
   )
 }
 
-function anyGroupHoldsLock(
+function anyGroupHasReleasableOverride(
   groupControl: GroupControlState | undefined
 ): boolean {
   const byGroup = groupControl?.byGroup ?? {}
-  return Object.keys(byGroup).some((group) => holdsLock(byGroup[group]))
+  return Object.keys(byGroup).some((group) =>
+    hasReleasableOverride(byGroup[group])
+  )
 }
 
 /**
@@ -81,14 +92,15 @@ export function computeMidiFeedbackState(
     } else if (action.type === 'setGroupExclusive') {
       lamps.set(id, exclusiveActive(groupOf(groupControl, action.group)))
     } else if (action.type === 'releaseGroupStrobe') {
-      lamps.set(id, holdsLock(groupOf(groupControl, action.group)))
+      lamps.set(id, hasReleasableOverride(groupOf(groupControl, action.group)))
     } else if (action.type === 'setGroupMasterStrobe') {
       lamps.set(id, master?.strobeActive === true)
     } else if (action.type === 'setGroupMasterBlinder') {
       lamps.set(id, master?.blinderActive === true)
     } else if (action.type === 'releaseAllGroupOverrides') {
-      // The rig-wide Release: lit whenever there is a lock anywhere for it to drop.
-      lamps.set(id, anyGroupHoldsLock(groupControl))
+      // The rig-wide Release: lit whenever any group is holding something for it to
+      // drop — a lock, or a wheel override.
+      lamps.set(id, anyGroupHasReleasableOverride(groupControl))
     }
   }
 
