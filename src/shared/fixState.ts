@@ -33,6 +33,8 @@ import {
   type GroupMasterControl,
 } from './groupControl'
 import { ColorChannel, inferColorKind } from './dmxColors'
+import { normalizeColorChase } from './colorChase'
+import { normalizeRandomizerOptions } from './randomizer'
 import {
   DmxValue,
   FixtureChannel,
@@ -559,6 +561,12 @@ export function fixLightScenes(light: LightScenes_t) {
     }
     if (!Array.isArray(scene.splitScenes) || scene.splitScenes.length === 0) {
       scene.splitScenes = [initSplitScene()]
+    }
+    for (const split of scene.splitScenes) {
+      if (split.colorChase !== undefined) {
+        split.colorChase = normalizeColorChase(split.colorChase)
+      }
+      split.randomizer = normalizeRandomizerOptions(split.randomizer)
     }
   }
 

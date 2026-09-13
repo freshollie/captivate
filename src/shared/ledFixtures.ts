@@ -4,6 +4,12 @@ import { BaseColors, getBaseColorsFromHsv } from './baseColors'
 import { getMovingWindow, getWindowRandomizerLevel } from './dmxUtil'
 import { getParam, Params } from './params'
 import type { RandomizerState } from './randomizer'
+import {
+  colorChaseHsv,
+  resolveColorChaseEntry,
+  type ColorChaseConfig,
+  type ColorChaseRuntime,
+} from './colorChase'
 import { Window2D_t } from './window'
 import { WledOutputMode } from './wledDiscovery'
 
@@ -149,12 +155,27 @@ export type LedRandomizerContext = {
   baseIndex: number
 }
 
+/**
+ * Colour chase applied along an LED fixture.
+ *
+ * The chase rank here is the pixel index, not a stage position: a strip is one
+ * continuous run and a grid is stored row-major, so pixel order already *is* the
+ * spatial order. Each LED fixture therefore chases along its own length rather than
+ * taking a slot in the rig-wide DMX ordering, which is what makes a chase read on a
+ * strip at all. `reverse` still flips the travel direction.
+ */
+export type LedColorChaseContext = {
+  config: ColorChaseConfig
+  runtime: ColorChaseRuntime
+}
+
 export function getLedValues(
   params: Params,
   ledFixture: LedFixture,
   master: number,
   placementDepth2DOnly: boolean = false,
-  randomizer?: LedRandomizerContext
+  randomizer?: LedRandomizerContext,
+  colorChase?: LedColorChaseContext
 ): BaseColors[] {
   const ledWindows = getLedWindows(ledFixture)
   if (ledWindows.length === 0) {
@@ -166,6 +187,8 @@ export function getLedValues(
   const brightness = getParam(params, 'brightness')
   const movingWindow = getMovingWindow(params, placementDepth2DOnly)
 
+  const pixelCount = ledWindows.length
+
   return ledWindows.map((ledWindow, pixelIndex) => {
     const randomizerLevel =
       randomizer?.state[randomizer.baseIndex + pixelIndex]?.level ?? 1
@@ -176,9 +199,24 @@ export function getLedValues(
       movingWindow
     )
 
+    const pixelColor =
+      colorChase === undefined
+        ? null
+        : colorChaseHsv(
+            resolveColorChaseEntry(
+              pixelIndex,
+              pixelCount,
+              colorChase.runtime,
+              colorChase.config
+            ),
+            colorChase.config,
+            hue,
+            saturation
+          )
+
     return getBaseColorsFromHsv(
-      hue,
-      saturation,
+      pixelColor?.hue ?? hue,
+      pixelColor?.saturation ?? saturation,
       brightness * windowMultiplier * master
     )
   })

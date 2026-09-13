@@ -14,7 +14,25 @@ import {
   normSplitShapingForStore,
 } from '../../shared/modulation'
 import { nanoid } from 'nanoid'
-import { RandomizerOptions } from '../../shared/randomizer'
+import {
+  initRandomizerOptions,
+  RandomizerOptions,
+} from '../../shared/randomizer'
+
+/** Randomizer fields that `setRandomizer` can write; the rest go via setRandomizerChase. */
+type NumericRandomizerKey = {
+  [K in keyof RandomizerOptions]: RandomizerOptions[K] extends number ? K : never
+}[keyof RandomizerOptions]
+import {
+  COLOR_CHASE_MAX_BLOCK_SIZE,
+  COLOR_CHASE_MAX_COLORS,
+  COLOR_CHASE_MAX_PERIOD,
+  COLOR_CHASE_MIN_PERIOD,
+  ColorChaseColor,
+  ColorChaseConfig,
+  chasePaletteEntry,
+  initColorChase,
+} from '../../shared/colorChase'
 import cloneDeep from 'lodash.clonedeep'
 import { LayerConfig } from '../../visualizer/threejs/layers/LayerConfig'
 import { DeviceState, initDeviceState, midiActions } from './deviceState'
@@ -718,12 +736,129 @@ const scenesSlice = createSlice({
         })
       }
     },
+    /**
+     * Colour-chase edits all funnel through here so the config is created on first
+     * touch. Splits saved before the feature existed have no `colorChase` block at
+     * all, which is what keeps old projects loading unchanged.
+     */
+    setColorChase: (
+      state,
+      {
+        payload: { splitIndex, patch },
+      }: PayloadAction<{
+        splitIndex: number
+        patch: Partial<Omit<ColorChaseConfig, 'colors'>>
+      }>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const splitScene = getSplitSceneSafe(scene, splitIndex)
+        if (splitScene === undefined) {
+          return
+        }
+        const config = splitScene.colorChase ?? initColorChase()
+        splitScene.colorChase = {
+          ...config,
+          ...patch,
+          period:
+            patch.period !== undefined
+              ? clamp(patch.period, COLOR_CHASE_MIN_PERIOD, COLOR_CHASE_MAX_PERIOD)
+              : config.period,
+          blockSize:
+            patch.blockSize !== undefined
+              ? Math.round(clamp(patch.blockSize, 1, COLOR_CHASE_MAX_BLOCK_SIZE))
+              : config.blockSize,
+          tail:
+            patch.tail !== undefined
+              ? Math.round(clamp(patch.tail, 1, COLOR_CHASE_MAX_BLOCK_SIZE))
+              : config.tail,
+          fade:
+            patch.fade !== undefined ? clampNormalized(patch.fade) : config.fade,
+        }
+      })
+    },
+    setColorChaseColor: (
+      state,
+      {
+        payload: { splitIndex, index, color },
+      }: PayloadAction<{
+        splitIndex: number
+        index: number
+        color: ColorChaseColor
+      }>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const splitScene = getSplitSceneSafe(scene, splitIndex)
+        if (splitScene === undefined) {
+          return
+        }
+        const config = splitScene.colorChase ?? initColorChase()
+        if (index < 0 || index >= config.colors.length) {
+          return
+        }
+        const colors = config.colors.map((existing, i) =>
+          i === index
+            ? {
+                hue: clampNormalized(color.hue),
+                saturation: clampNormalized(color.saturation),
+              }
+            : existing
+        )
+        splitScene.colorChase = { ...config, colors }
+      })
+    },
+    addColorChaseColor: (
+      state,
+      {
+        payload: { splitIndex, color },
+      }: PayloadAction<{ splitIndex: number; color?: ColorChaseColor }>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const splitScene = getSplitSceneSafe(scene, splitIndex)
+        if (splitScene === undefined) {
+          return
+        }
+        const config = splitScene.colorChase ?? initColorChase()
+        if (config.colors.length >= COLOR_CHASE_MAX_COLORS) {
+          return
+        }
+        // Position in the fixed palette, never a step away from the previous swatch:
+        // deriving from the last colour makes the palette depend on edit order.
+        const next: ColorChaseColor = color ?? chasePaletteEntry(config.colors.length)
+        splitScene.colorChase = {
+          ...config,
+          colors: [...config.colors, next],
+        }
+      })
+    },
+    removeColorChaseColor: (
+      state,
+      {
+        payload: { splitIndex, index },
+      }: PayloadAction<{ splitIndex: number; index: number }>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const splitScene = getSplitSceneSafe(scene, splitIndex)
+        if (splitScene === undefined) {
+          return
+        }
+        const config = splitScene.colorChase ?? initColorChase()
+        // One colour still chases against the split's own colour in runner mode,
+        // but zero has nothing to show, so the last swatch cannot be removed.
+        if (config.colors.length <= 1) {
+          return
+        }
+        splitScene.colorChase = {
+          ...config,
+          colors: config.colors.filter((_, i) => i !== index),
+        }
+      })
+    },
     setRandomizer: (
       state,
       {
         payload: { key, value, splitIndex },
       }: PayloadAction<{
-        key: keyof RandomizerOptions
+        key: NumericRandomizerKey
         value: number
         splitIndex: number
       }>
@@ -734,6 +869,43 @@ const scenesSlice = createSlice({
           return
         }
         splitScene.randomizer[key] = value
+      })
+    },
+    /**
+     * Mode and chase settings, which are not all numbers so cannot go through
+     * `setRandomizer`. Merged onto the defaults so a randomizer saved before chase mode
+     * existed picks up the new fields on first touch instead of holding undefined.
+     */
+    setRandomizerChase: (
+      state,
+      {
+        payload: { splitIndex, patch },
+      }: PayloadAction<{
+        splitIndex: number
+        patch: Partial<RandomizerOptions>
+      }>
+    ) => {
+      modifyActiveLightScene(state, (scene) => {
+        const splitScene = getSplitSceneSafe(scene, splitIndex)
+        if (splitScene === undefined) {
+          return
+        }
+        const next = {
+          ...initRandomizerOptions(),
+          ...splitScene.randomizer,
+          ...patch,
+        }
+        // Rotate and blocks need at least two groups: with one, every light is in the
+        // firing group and the whole rig flashes in unison instead of chasing.
+        const minGroups = next.chasePattern === 'runner' ? 1 : 2
+        next.chaseGroups = Math.round(clamp(next.chaseGroups, minGroups, 8))
+        next.chaseBlockSize = Math.round(
+          clamp(next.chaseBlockSize, 1, COLOR_CHASE_MAX_BLOCK_SIZE)
+        )
+        next.chaseTail = Math.round(
+          clamp(next.chaseTail, 1, COLOR_CHASE_MAX_BLOCK_SIZE)
+        )
+        splitScene.randomizer = next
       })
     },
     addSplitScene: (state, {}: PayloadAction<undefined>) => {
@@ -1141,6 +1313,11 @@ export const {
   setSplitModShaping,
   resetModulator,
   setRandomizer,
+  setRandomizerChase,
+  setColorChase,
+  setColorChaseColor,
+  addColorChaseColor,
+  removeColorChaseColor,
   addSplitScene,
   pasteSplitScene,
   ensureSplitSceneForGroup,

@@ -16,6 +16,7 @@ import {
   Params,
 } from '../../shared/params'
 import { RandomizerState } from '../../shared/randomizer'
+import type { ColorChaseRuntime } from '../../shared/colorChase'
 import {
   AudioEngineMetrics,
   initAudioEngineMetrics,
@@ -32,6 +33,8 @@ function initDmxOut(): number[] {
 export interface SplitState {
   outputParams: Params
   randomizer: RandomizerState
+  /** Beat-locked colour chase position, or null when the split has no chase running. */
+  colorChase: ColorChaseRuntime | null
 }
 
 export interface RealtimeState {

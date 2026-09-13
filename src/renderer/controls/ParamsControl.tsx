@@ -6,6 +6,7 @@ import styled from 'styled-components'
 import type { CSSProperties } from 'react'
 import { useMemo } from 'react'
 import Randomizer from './Randomizer'
+import ColorChase from './ColorChase'
 import XYAxispad from './XYAxisPad'
 import ParamAddButton from './ParamAddButton'
 import {
@@ -841,6 +842,13 @@ export default function ParamsControl({ splitIndex }: Params) {
       ) : null}
       {showMoverControls && <XYAxispad splitIndex={splitIndex} />}
       <Randomizer splitIndex={splitIndex} />
+      {(showHsvPad || showColorWheelControl) && (
+        <ColorChase
+          splitIndex={splitIndex}
+          slots={splitColorCapabilities.slots}
+          hasSplitHue={showHsvPad}
+        />
+      )}
       <StrobeControl splitIndex={splitIndex} />
       <GoboControl splitIndex={splitIndex} />
       <FocusControl splitIndex={splitIndex} />

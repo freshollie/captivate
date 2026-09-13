@@ -1,6 +1,10 @@
 import type { SplitState } from '../../renderer/redux/realtimeStore'
 import type { Params } from '../../shared/params'
 import type { RandomizerState } from '../../shared/randomizer'
+import {
+  colorChaseRuntimeEqual,
+  type ColorChaseRuntime,
+} from '../../shared/colorChase'
 
 export function dmxUniverseBuffersEqual(a: number[], b: number[]): boolean {
   if (a === b) {
@@ -76,10 +80,21 @@ function randomizerStateEqual(a: RandomizerState, b: RandomizerState): boolean {
   return true
 }
 
+function colorChaseEqual(
+  a: ColorChaseRuntime | null,
+  b: ColorChaseRuntime | null
+): boolean {
+  if (a === null || b === null) {
+    return a === b
+  }
+  return colorChaseRuntimeEqual(a, b)
+}
+
 function splitStateEqual(a: SplitState, b: SplitState): boolean {
   return (
     outputParamsEqual(a.outputParams, b.outputParams) &&
-    randomizerStateEqual(a.randomizer, b.randomizer)
+    randomizerStateEqual(a.randomizer, b.randomizer) &&
+    colorChaseEqual(a.colorChase, b.colorChase)
   )
 }
 

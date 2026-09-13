@@ -12,6 +12,8 @@ import {
 import { SplitScene_t } from '../../shared/Scenes'
 import { fixtureGroupsMatchSceneGroups } from '../../shared/sceneGroups'
 import { getLedValues } from '../../shared/ledFixtures'
+import { buildLedColorChaseContext } from '../../shared/splitRandomizer'
+import type { ColorChaseRuntime } from '../../shared/colorChase'
 import {
   type AtmosphereEffectType,
   type AtmosphereNozzleDirection,
@@ -1704,24 +1706,46 @@ export function findClosestReferenceIndex<T>(
   return bestIndex
 }
 
-export function resolveSplitParamsForFixture(
+/**
+ * Per-split runtime the preview reads. Structural rather than `SplitState[]` so the
+ * preview keeps working against partially-populated state during a reconnect.
+ */
+export type PreviewSplitStates = Array<
+  | {
+      outputParams: Params
+      colorChase?: ColorChaseRuntime | null
+    }
+  | undefined
+>
+
+export type PreviewSplitLayer = {
+  /** -1 when the layer is the caller's fallback rather than a real split. */
+  splitIndex: number
+  params: Params
+}
+
+/**
+ * Splits driving a fixture, carrying the split index so per-split runtime state
+ * (the colour chase) can be looked up alongside the params.
+ */
+export function resolveSplitLayersForFixture(
   fixtureGroups: string[],
   splitScenes: SplitScene_t[],
-  splitStates: Array<{ outputParams: Params } | undefined>,
+  splitStates: PreviewSplitStates,
   fallbackParams: Params
-): Params[] {
+): PreviewSplitLayer[] {
   if (splitScenes.length === 0 || splitStates.length === 0) {
-    return [fallbackParams]
+    return [{ splitIndex: -1, params: fallbackParams }]
   }
 
-  const matched: Params[] = []
+  const matched: PreviewSplitLayer[] = []
   for (let i = 0; i < splitScenes.length; i++) {
     if (!fixtureGroupsMatchSceneGroups(fixtureGroups, splitScenes[i].groups)) {
       continue
     }
     const params = splitStates[i]?.outputParams
     if (params !== undefined) {
-      matched.push(params)
+      matched.push({ splitIndex: i, params })
     }
   }
 
@@ -1729,8 +1753,10 @@ export function resolveSplitParamsForFixture(
     return matched
   }
 
-  const fallback = splitStates[0]?.outputParams ?? fallbackParams
-  return [fallback]
+  const fallback = splitStates[0]?.outputParams
+  return fallback !== undefined
+    ? [{ splitIndex: 0, params: fallback }]
+    : [{ splitIndex: -1, params: fallbackParams }]
 }
 
 export function combineLedLayers(layers: BaseColors[][]): BaseColors[] {
@@ -1778,7 +1804,7 @@ function previewGroupHasColorKind(
 export function buildTargets(
   fixtures: MoverPreviewFixture[],
   fallbackParams: Params,
-  splitStates: Array<{ outputParams: Params } | undefined>,
+  splitStates: PreviewSplitStates,
   splitScenes: SplitScene_t[],
   dmxOutByUniverse: number[][],
   floorSpec: FloorSpec,
@@ -1918,7 +1944,7 @@ export function buildTargets(
       const universeData = dmxOutByUniverse[universe - 1]
 
       if (fixture.isLedFixture) {
-        const ledParams = resolveSplitParamsForFixture(
+        const ledSplitLayers = resolveSplitLayersForFixture(
           fixture.groups,
           splitScenes,
           splitStates,
@@ -1927,8 +1953,18 @@ export function buildTargets(
         const ledFixture = fixture.ledFixture
         const ledLayers =
           ledFixture !== undefined
-            ? ledParams.map((params) =>
-                getLedValues(params, ledFixture, master, placementDepth2DOnly)
+            ? ledSplitLayers.map((layer) =>
+                getLedValues(
+                  layer.params,
+                  ledFixture,
+                  master,
+                  placementDepth2DOnly,
+                  undefined,
+                  buildLedColorChaseContext(
+                    splitScenes[layer.splitIndex],
+                    splitStates[layer.splitIndex]
+                  )
+                )
               )
             : []
         const combinedLedValues = combineLedLayers(ledLayers)
@@ -2577,7 +2613,7 @@ export function applyLiveValuesToPreviewTargets(
   targets: PreviewTarget[],
   fixturesById: Map<string, MoverPreviewFixture>,
   fallbackParams: Params,
-  splitStates: Array<{ outputParams: Params } | undefined>,
+  splitStates: PreviewSplitStates,
   splitScenes: SplitScene_t[],
   dmxOutByUniverse: number[][],
   floorSpec: FloorSpec,
@@ -2599,7 +2635,7 @@ export function applyLiveValuesToPreviewTargets(
       colorForGroup(fixture.groupName)
 
     if (target.isLedFixture) {
-      const ledParams = resolveSplitParamsForFixture(
+      const ledSplitLayers = resolveSplitLayersForFixture(
         fixture.groups,
         splitScenes,
         splitStates,
@@ -2608,8 +2644,18 @@ export function applyLiveValuesToPreviewTargets(
       const ledFixture = fixture.ledFixture
       const ledLayers =
         ledFixture !== undefined
-          ? ledParams.map((params) =>
-              getLedValues(params, ledFixture, master, placementDepth2DOnly)
+          ? ledSplitLayers.map((layer) =>
+              getLedValues(
+                layer.params,
+                ledFixture,
+                master,
+                placementDepth2DOnly,
+                undefined,
+                buildLedColorChaseContext(
+                  splitScenes[layer.splitIndex],
+                  splitStates[layer.splitIndex]
+                )
+              )
             )
           : []
       const combinedLedValues = combineLedLayers(ledLayers)
@@ -2631,13 +2677,13 @@ export function applyLiveValuesToPreviewTargets(
 
     const universe = Math.max(1, Math.round(fixture.universe || 1))
     const universeData = dmxOutByUniverse[universe - 1]
-    const splitParamsList = resolveSplitParamsForFixture(
+    const splitParamsList = resolveSplitLayersForFixture(
       fixture.groups,
       splitScenes,
       splitStates,
       fallbackParams
     )
-    const splitParams = splitParamsList[0] ?? fallbackParams
+    const splitParams = splitParamsList[0]?.params ?? fallbackParams
     const fixtureWorld = fixtureWorldFromUniversePosition(
       fixture.xPos,
       fixture.yPos,

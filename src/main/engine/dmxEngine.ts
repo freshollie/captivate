@@ -57,6 +57,12 @@ import {
   type AudioEngineMetrics,
 } from '../../shared/audioEngine'
 import {
+  applyColorChaseToParams,
+  colorChaseIsActive,
+  colorChaseRanks,
+  resolveColorChaseEntry,
+} from '../../shared/colorChase'
+import {
   dmxRandomizerSlotIndex,
   getDmxRandomizerFixtures,
 } from '../../shared/splitRandomizer'
@@ -1131,10 +1137,10 @@ function calculateDmxForUniverse(
 
     if (activeScene?.splitScenes) {
       let splitIndex = -1
-      for (const [{ outputParams, randomizer }, splitScene] of zip(
-        splitStates,
-        activeScene.splitScenes
-      )) {
+      for (const [
+        { outputParams, randomizer, colorChase: colorChaseRuntime },
+        splitScene,
+      ] of zip(splitStates, activeScene.splitScenes)) {
       splitIndex += 1
       const splitGroups = splitScene.groups
       const splitHasAxisBundle =
@@ -1164,6 +1170,23 @@ function calculateDmxForUniverse(
         splitGroups,
         intensityCeiling
       )
+      // The chase shares the randomizer's index space: one entry per physical light,
+      // rig-wide rather than per universe, so a chase crosses universe boundaries
+      // without stuttering. Ranks reorder that space by stage position.
+      const colorChaseConfig =
+        colorChaseIsActive(splitScene.colorChase) && colorChaseRuntime != null
+          ? splitScene.colorChase
+          : null
+      const chaseRanks =
+        colorChaseConfig !== null
+          ? colorChaseRanks(
+              randomizerFixtures.map((randomizerFixture) => ({
+                x: clampNormalized(randomizerFixture.window?.x?.pos ?? 0.5),
+                y: clampNormalized(randomizerFixture.window?.y?.pos ?? 0.5),
+              })),
+              colorChaseConfig.ordering
+            )
+          : null
       const followOverrideGroupNames =
         state.gui.moverFollowOverrideUseAllGroups === true
           ? undefined
@@ -1207,8 +1230,12 @@ function calculateDmxForUniverse(
           : 0
       const stageMapMix = getParam(outputParams, 'visStageMapMix') * stageMapMaster
       const stageCrop2d = getMovingWindow(outputParams, placementDepth2DOnly)
-      const stageLightFixtureParams =
-        stageLightGrid !== null && stageMapMix > 0.001
+      const stageMapActive = stageLightGrid !== null && stageMapMix > 0.001
+      // One cache for every per-fixture params override on this split. Chase colour is
+      // applied first so a stage light map — a video feed driving the rig — still
+      // blends over the top of whatever colour the chase handed each fixture.
+      const perFixtureParams =
+        stageMapActive || colorChaseConfig !== null
           ? new Map<number, Params>()
           : null
 
@@ -1251,17 +1278,37 @@ function calculateDmxForUniverse(
           )
 
           let dmxParams = outputParams
-          if (stageLightFixtureParams !== null && stageLightGrid !== null) {
-            let merged = stageLightFixtureParams.get(fixtureIdx)
+          if (perFixtureParams !== null) {
+            let merged = perFixtureParams.get(fixtureIdx)
             if (merged === undefined) {
-              merged = mergeParamsWithStageLightSample(
-                outputParams,
-                fixture,
-                stageLightGrid,
-                stageMapMix,
-                stageCrop2d
-              )
-              stageLightFixtureParams.set(fixtureIdx, merged)
+              merged = outputParams
+              if (
+                colorChaseConfig !== null &&
+                colorChaseRuntime != null &&
+                chaseRanks !== null &&
+                randomizerSlot >= 0
+              ) {
+                merged = applyColorChaseToParams(
+                  merged,
+                  resolveColorChaseEntry(
+                    chaseRanks[randomizerSlot] ?? -1,
+                    chaseRanks.length,
+                    colorChaseRuntime,
+                    colorChaseConfig
+                  ),
+                  colorChaseConfig
+                )
+              }
+              if (stageMapActive && stageLightGrid !== null) {
+                merged = mergeParamsWithStageLightSample(
+                  merged,
+                  fixture,
+                  stageLightGrid,
+                  stageMapMix,
+                  stageCrop2d
+                )
+              }
+              perFixtureParams.set(fixtureIdx, merged)
             }
             dmxParams = merged
           }

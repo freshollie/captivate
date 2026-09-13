@@ -17,6 +17,12 @@ import {
   resizeRandomizer,
   updateIndexes,
 } from '../../shared/randomizer'
+import {
+  colorChaseIsActive,
+  computeColorChaseRuntime,
+} from '../../shared/colorChase'
+import { buildRandomizerChaseRanks } from '../../shared/splitRandomizer'
+
 import { getOutputParams } from '../../shared/modulation'
 import { handleMessage } from './handleMidi'
 import { VisualizerContainer } from './createVisualizerWindow'
@@ -1684,17 +1690,43 @@ function getNextRealtimeState(
         randomizerSlotCount
       )
 
+      // Chase mode needs to know where each slot's light is on stage. The DMX slots
+      // come first in the array and are ranked by position; LED pixels follow in their
+      // own order, so a strip chases along itself rather than being sorted into the
+      // DMX fixtures.
+      const randomizerRanks =
+        splitScene.randomizer?.mode === 'chase'
+          ? buildRandomizerChaseRanks(
+              fixtures,
+              splitScene.groups,
+              intensityCeiling,
+              randomizerSlotCount,
+              splitScene.randomizer.chaseOrdering
+            )
+          : undefined
+
       newRandomizerState = updateIndexes(
         realtimeState.time.beats,
         newRandomizerState,
         nextTimeState,
         indexArray(randomizerSlotCount),
-        splitScene.randomizer
+        splitScene.randomizer,
+        randomizerRanks
       )
+
+      const colorChase = splitScene.colorChase
+      const colorChaseRuntime = colorChaseIsActive(colorChase)
+        ? computeColorChaseRuntime(
+            nextTimeState.beats,
+            colorChase.period,
+            colorChase.static
+          )
+        : null
 
       return {
         outputParams: splitOutputParams,
         randomizer: newRandomizerState,
+        colorChase: colorChaseRuntime,
       }
     }
   )

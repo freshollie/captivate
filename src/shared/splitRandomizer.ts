@@ -6,6 +6,15 @@ import {
   normalizeLedFixtureForRuntime,
 } from './ledFixtures'
 import { applyRandomization, type RandomizerState } from './randomizer'
+import {
+  colorChaseIsActive,
+  colorChaseRanks,
+  type ColorChaseConfig,
+  type ColorChaseOrdering,
+  type ColorChaseRuntime,
+} from './colorChase'
+import { clampNormalized } from '../math/util'
+import type { LedColorChaseContext } from './ledFixtures'
 import type { BaseColors } from './baseColors'
 import {
   ledFixtureMatchesSceneGroups,
@@ -175,6 +184,25 @@ export function buildLedRandomizerContext(
   }
 }
 
+/**
+ * Chase context for an LED fixture, or undefined when the split has no chase running.
+ *
+ * Unlike the randomizer there is no slot offset to work out: an LED fixture chases
+ * along its own pixels (see `LedColorChaseContext`), so the config and the beat-locked
+ * runtime position are all a caller needs.
+ */
+export function buildLedColorChaseContext(
+  splitScene: { colorChase?: ColorChaseConfig } | undefined,
+  splitState: { colorChase?: ColorChaseRuntime | null } | undefined
+): LedColorChaseContext | undefined {
+  const config = splitScene?.colorChase
+  const runtime = splitState?.colorChase
+  if (!colorChaseIsActive(config) || runtime === undefined || runtime === null) {
+    return undefined
+  }
+  return { config, runtime }
+}
+
 export function applyLedRandomizerToColors(
   colors: BaseColors[],
   randomizer: RandomizerState | undefined,
@@ -193,4 +221,39 @@ export function applyLedRandomizerToColors(
       blue: applyRandomization(color.blue, randomizerLevel, randomizationAmount),
     }
   })
+}
+
+/**
+ * Chase position for every randomizer slot in a split.
+ *
+ * Mirrors the slot layout `countSplitRandomizerSlots` builds: one entry per physical
+ * DMX light, ranked by stage position, then one per LED pixel left in pixel order and
+ * pushed past the DMX block so the two do not interleave.
+ *
+ * Shared with the renderer so the randomizer preview can draw its bars in the same
+ * order the engine fires them. Drawing them in slot order instead makes a working
+ * chase look like it is still picking lights at random, because slot order is patch
+ * order and the chase runs in stage order.
+ */
+export function buildRandomizerChaseRanks(
+  fixtures: FlattenedFixture[],
+  groups: SceneGroups,
+  intensityCeiling: number,
+  slotCount: number,
+  ordering: ColorChaseOrdering
+): number[] {
+  const dmxFixtures = getDmxRandomizerFixtures(fixtures, groups, intensityCeiling)
+  const ranks = colorChaseRanks(
+    dmxFixtures.map((fixture) => ({
+      x: clampNormalized(fixture.window?.x?.pos ?? 0.5),
+      y: clampNormalized(fixture.window?.y?.pos ?? 0.5),
+    })),
+    ordering
+  )
+
+  const all = new Array<number>(slotCount)
+  for (let i = 0; i < slotCount; i++) {
+    all[i] = i < ranks.length ? ranks[i] : i
+  }
+  return all
 }

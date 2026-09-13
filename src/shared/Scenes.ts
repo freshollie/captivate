@@ -6,6 +6,7 @@ import {
   type SplitModShaping,
 } from './modulation'
 import { RandomizerOptions, initRandomizerOptions } from './randomizer'
+import { ColorChaseConfig, cloneColorChase } from './colorChase'
 import { nanoid } from 'nanoid'
 import {
   LayerConfig,
@@ -30,6 +31,11 @@ export interface SplitScene_t {
    */
   splitModShaping?: SplitModShaping
   randomizer: RandomizerOptions
+  /**
+   * Optional beat-stepped colour sequence for this split (see colorChase.ts).
+   * Absent on splits that have never used one, so old saves load untouched.
+   */
+  colorChase?: ColorChaseConfig
   // true = include group | false = include not group
   groups: { [key: string]: boolean | undefined }
 }
@@ -52,6 +58,9 @@ export function cloneSplitScene(split: SplitScene_t): SplitScene_t {
     baseParams: { ...split.baseParams },
     randomizer: { ...split.randomizer },
     groups: { ...split.groups },
+    ...(split.colorChase !== undefined
+      ? { colorChase: cloneColorChase(split.colorChase) }
+      : {}),
     ...(split.modManualAnchors !== undefined
       ? { modManualAnchors: { ...split.modManualAnchors } }
       : {}),

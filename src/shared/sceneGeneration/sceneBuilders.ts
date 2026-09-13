@@ -1,6 +1,6 @@
 import { Modulator } from '../modulation'
 import { Modulation, Params } from '../params'
-import { RandomizerOptions } from '../randomizer'
+import { initRandomizerOptions, RandomizerOptions } from '../randomizer'
 import { LightScene_t, SplitScene_t } from '../Scenes'
 import { LfoShape } from '../oscillator'
 import {
@@ -12,27 +12,27 @@ import {
 import { SeededRng } from './rng'
 import type { RigProfile } from './rigProfile'
 
-export const defaultRandomizer: RandomizerOptions = {
-  triggerPeriod: 1,
-  triggerDensity: 0.3,
-  envelopeRatio: 0.1,
-  envelopeDuration: 1,
-}
+export const defaultRandomizer: RandomizerOptions = initRandomizerOptions()
 
+// Generated scenes stay on the random mode; the chase settings come from the defaults
+// so a preset only has to say what it actually varies.
 export const RAND = {
   light: {
+    ...initRandomizerOptions(),
     triggerPeriod: 1.5,
     triggerDensity: 0.22,
     envelopeRatio: 0.12,
     envelopeDuration: 0.85,
   },
   spark: {
+    ...initRandomizerOptions(),
     triggerPeriod: 0.75,
     triggerDensity: 0.38,
     envelopeRatio: 0.07,
     envelopeDuration: 0.55,
   },
   rare: {
+    ...initRandomizerOptions(),
     triggerPeriod: 2.25,
     triggerDensity: 0.14,
     envelopeRatio: 0.14,

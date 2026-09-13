@@ -5,6 +5,7 @@ import { SplitScene_t } from '../../../shared/Scenes'
 import { ledFixtureMatchesSceneGroups } from '../../../shared/sceneGroups'
 import {
   applyLedRandomizerToColors,
+  buildLedColorChaseContext,
   buildLedRandomizerContext,
   pickPrimarySplitLayerForLed,
 } from '../../../shared/splitRandomizer'
@@ -126,12 +127,17 @@ export default class WledManager {
 
           if (splitLayers.length > 0) {
             const placementDepth2DOnly = state.gui.fxtrDepthOn !== true
-            const layers = splitLayers.map(({ params }) =>
+            const layers = splitLayers.map(({ params, splitIndex }) =>
               getLedValues(
                 params,
                 fixture,
                 state.control.master,
-                placementDepth2DOnly
+                placementDepth2DOnly,
+                undefined,
+                buildLedColorChaseContext(
+                  splitScenes[splitIndex],
+                  rtState.splitStates[splitIndex]
+                )
               )
             )
             let combinedColors = combineLedLayers(layers)
@@ -189,8 +195,18 @@ export default class WledManager {
         }
 
         const placementDepth2DOnly = state.gui.fxtrDepthOn !== true
-        const layers = splitLayers.map(({ params }) =>
-          getLedValues(params, fixture, state.control.master, placementDepth2DOnly)
+        const layers = splitLayers.map(({ params, splitIndex }) =>
+          getLedValues(
+            params,
+            fixture,
+            state.control.master,
+            placementDepth2DOnly,
+            undefined,
+            buildLedColorChaseContext(
+              splitScenes[splitIndex],
+              rtState.splitStates[splitIndex]
+            )
+          )
         )
         const combinedColors = combineLedLayers(layers)
         if (combinedColors.length <= 0) {

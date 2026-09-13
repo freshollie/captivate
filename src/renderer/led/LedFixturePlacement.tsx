@@ -33,6 +33,7 @@ import { SplitScene_t } from 'shared/Scenes'
 import { ledFixtureMatchesSceneGroups } from 'shared/sceneGroups'
 import {
   applyLedRandomizerToColors,
+  buildLedColorChaseContext,
   buildLedRandomizerContext,
   pickPrimarySplitLayerForLed,
 } from 'shared/splitRandomizer'
@@ -210,7 +211,19 @@ export default function LedFixturePlacement({}: Props) {
     }
 
     const placementDepth2DOnly = fxtrDepthOn !== true
-    let colors = getLedValues(params, fixture, master, placementDepth2DOnly)
+    let colors = getLedValues(
+      params,
+      fixture,
+      master,
+      placementDepth2DOnly,
+      undefined,
+      primaryLayer === null
+        ? undefined
+        : buildLedColorChaseContext(
+            splitScenes[primaryLayer.splitIndex],
+            splitStates[primaryLayer.splitIndex]
+          )
+    )
     if (primaryLayer !== null) {
       const randomizerContext = buildLedRandomizerContext(
         splitStates[primaryLayer.splitIndex],
