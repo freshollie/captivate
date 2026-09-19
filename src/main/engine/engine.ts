@@ -51,6 +51,7 @@ import {
   midiFeedbackChanges,
   MIDI_FEEDBACK_ENABLED,
 } from '../../shared/midiFeedback'
+import { anyGroupTimedPending } from '../../shared/groupControl'
 import { findMidiLedProfile, lampMessage } from '../../shared/midiLedProfile'
 import { MidiMessage, midiInputID } from '../../shared/midi'
 import { getAllParamKeys } from '../../renderer/redux/dmxSlice'
@@ -576,6 +577,13 @@ function runRealtimeLoopTick() {
           state: _controlState,
         })
       }
+    }
+    // A timed gate shuts when its deadline passes, which dispatches nothing — so the
+    // lamp reporting it would stay lit until some unrelated state change came along.
+    // Only asked while a gate is actually outstanding, and `midiFeedbackChanges` still
+    // sends nothing unless a lamp really moved.
+    if (anyGroupTimedPending(_controlState?.groupControl)) {
+      syncMidiFeedback()
     }
     telemetryHealthSampled('engine.realtime', 'ok')
   } catch (error) {

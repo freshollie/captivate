@@ -120,6 +120,26 @@ interface SetGroupBlinder {
   group: string
 }
 
+/**
+ * Kill a group. Momentary: held while the pad is down.
+ *
+ * Unlike the other momentary group pads, a blackout locked on with Release survives
+ * a scene change — see `GroupControl.blackoutActive`.
+ */
+interface SetGroupBlackout {
+  type: 'setGroupBlackout'
+  group: string
+}
+
+/**
+ * Fire a group's timed gate. Latching, not momentary: the run is timed, so holding the
+ * pad would mean nothing and a press while it runs shuts it early.
+ */
+interface SetGroupTimed {
+  type: 'setGroupTimed'
+  group: string
+}
+
 /** Groups-page master dimmer, layered over every following group. */
 interface SetGroupMasterDimmer {
   type: 'setGroupMasterDimmer'
@@ -215,6 +235,8 @@ export const buttonMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
   'setGroupStrobeFlash',
   'setGroupBlinder',
+  'setGroupBlackout',
+  'setGroupTimed',
   'setGroupMasterStrobe',
   'setGroupMasterBlinder',
   'releaseAllGroupOverrides',
@@ -233,6 +255,7 @@ export const momentaryMidiActionTypes: Set<MidiAction['type']> = new Set([
   'setGroupExclusive',
   'setGroupStrobeFlash',
   'setGroupBlinder',
+  'setGroupBlackout',
   'setGroupMasterStrobe',
   'setGroupMasterBlinder',
   // Not because it engages anything while down, but because holding it is what turns
@@ -249,6 +272,8 @@ export type MidiAction =
   | SetGroupExclusive
   | SetGroupStrobeFlash
   | SetGroupBlinder
+  | SetGroupBlackout
+  | SetGroupTimed
   | SetGroupMasterDimmer
   | SetGroupMasterStrobe
   | SetGroupMasterBlinder
@@ -390,11 +415,40 @@ export function getActionID(action: MidiAction) {
     action.type === 'setGroupExclusive' ||
     action.type === 'setGroupStrobeFlash' ||
     action.type === 'setGroupBlinder' ||
+    action.type === 'setGroupBlackout' ||
+    action.type === 'setGroupTimed' ||
     action.type === 'releaseGroupStrobe'
   ) {
     return `${action.type}:${action.group}`
   }
   return action.type
+}
+
+/**
+ * Other bound actions sharing one MIDI input, by action id, in stable order.
+ *
+ * An input can drive any number of actions, so a mapping overlay has to be able to say
+ * "this pad is not only yours" — otherwise a shared pad is invisible until something
+ * unexpected happens on stage. `exceptActionID` leaves out the control doing the
+ * asking, which is always the one already showing the input.
+ */
+export function actionIDsSharingInput(
+  state: Pick<DeviceState, 'buttonActions' | 'sliderActions'>,
+  inputID: string,
+  exceptActionID: string
+): string[] {
+  const shared: string[] = []
+  for (const [actionID, binding] of Object.entries(state.buttonActions)) {
+    if (binding.inputID === inputID && actionID !== exceptActionID) {
+      shared.push(actionID)
+    }
+  }
+  for (const [actionID, binding] of Object.entries(state.sliderActions)) {
+    if (binding.inputID === inputID && actionID !== exceptActionID) {
+      shared.push(actionID)
+    }
+  }
+  return shared.sort()
 }
 
 export function findKeyboardChordIdForAction(
@@ -565,11 +619,23 @@ function ensureAtmosLevelChMut(
 }
 
 export const midiActions = {
+  /**
+   * Bind an input to an action, leaving anything else on that input alone.
+   *
+   * Learning is additive: an input can drive any number of actions, which is how a
+   * single pad becomes a macro — Black on three groups, a solo and a scene change
+   * together. The map is keyed by action, so re-learning *this* action still replaces
+   * its own binding; only other actions' claims on the input survive.
+   *
+   * It is also the less destructive of the two behaviours. Learning used to clear the
+   * input first, so pressing the wrong pad silently unbound whatever else was on it,
+   * with no way back but re-learning that control. Now a mistake only mis-binds the
+   * control being learned, and re-learning it is the whole fix.
+   */
   setButtonAction: (
     state: DeviceState,
     { payload }: PayloadAction<{ inputID: string; action: MidiAction }>
   ) => {
-    clearInputID(state, payload.inputID)
     state.buttonActions[getActionID(payload.action)] = payload
   },
   setSliderAction: (
@@ -582,7 +648,6 @@ export const midiActions = {
       options: SliderControlOptions
     }>
   ) => {
-    clearInputID(state, payload.inputID)
     state.sliderActions[getActionID(payload.action)] = {
       ...payload,
       options: normalizeSliderOptionsForAction(payload.action, payload.options),
@@ -1179,11 +1244,3 @@ export const midiActions = {
   },
 }
 
-function clearInputID(state: DeviceState, inputID: string) {
-  for (let [actionID, buttonAction] of Object.entries(state.buttonActions)) {
-    if (buttonAction.inputID === inputID) delete state.buttonActions[actionID]
-  }
-  for (let [actionID, sliderAction] of Object.entries(state.sliderActions)) {
-    if (sliderAction.inputID === inputID) delete state.sliderActions[actionID]
-  }
-}

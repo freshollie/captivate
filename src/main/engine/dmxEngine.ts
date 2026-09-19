@@ -1027,7 +1027,9 @@ function calculateDmxForUniverse(
   timeState: TimeState,
   universeIndex: number,
   moverPhaseAimBySplit: Array<MoverPhaseAim | null>,
-  blinderLevels: { [group: string]: number } = {}
+  blinderLevels: { [group: string]: number } = {},
+  /** Wall clock for the timed group gates; see `GroupControl.timedUntilMs`. */
+  nowMs: number = Date.now()
 ): number[] {
   const universeFixtures = state.dmx.universe.filter(
     (fixture) => (fixture.universe ?? 1) === universeIndex
@@ -1375,7 +1377,7 @@ function calculateDmxForUniverse(
       all_fixtures,
       state.groupControl,
       blinderLevels,
-      { calibratingFixtureId: moverCalibrationOverride?.fixtureId }
+      { calibratingFixtureId: moverCalibrationOverride?.fixtureId, nowMs }
     )
   } catch (error) {
     reportGroupControlFailure(error)
@@ -1470,6 +1472,10 @@ export function calculateDmx(
     performance.now(),
     timeState.bpm
   )
+  // Read once per frame so every universe judges the timed gates against the same
+  // instant. Wall clock, not `performance.now()` above: the deadline was stamped in
+  // whichever process took the press, and only this clock means the same in both.
+  const groupTimedNowMs = Date.now()
 
   for (let universeIndex = 1; universeIndex <= universeCount; universeIndex++) {
     outputByUniverse.push(
@@ -1479,7 +1485,8 @@ export function calculateDmx(
         timeState,
         universeIndex,
         moverPhaseAimBySplit,
-        blinderLevels
+        blinderLevels,
+        groupTimedNowMs
       )
     )
   }

@@ -18,11 +18,14 @@ import {
   setGroupRelease,
   setGroupExclusive,
   setGroupBlinder,
+  setGroupBlackout,
+  fireGroupTimed,
   setGroupStrobeFlash,
   releaseAllLiveOverrides,
   setMasterBlinder,
   setMasterStrobe,
   toggleGroupBlinder,
+  toggleGroupBlackout,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
   toggleMasterBlinder,
@@ -106,6 +109,16 @@ export function fireMidiButtonAction(
         ? toggleGroupBlinder(action.group)
         : setGroupBlinder({ group: action.group, pressed })
     )
+  } else if (action.type === 'setGroupBlackout') {
+    dispatch(
+      pressed === undefined
+        ? toggleGroupBlackout(action.group)
+        : setGroupBlackout({ group: action.group, pressed })
+    )
+  } else if (action.type === 'setGroupTimed') {
+    // Latching whatever the input: the run is on a clock, so there is no hold to
+    // honour, and a second press shuts the gate early.
+    dispatch(fireGroupTimed({ group: action.group, nowMs: Date.now() }))
   } else if (action.type === 'setEpicnessLevel') {
     // Resolved now, from the state the operator could see when they pressed —
     // not after the quantize delay, when auto-scene may have moved on.

@@ -1,5 +1,5 @@
 import styled from 'styled-components'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { Button } from '@mui/material'
 import SliderBase from '../base/SliderBase'
@@ -23,8 +23,12 @@ import {
   toggleMasterBlinder,
   toggleMasterStrobe,
   toggleGroupBlinder,
+  toggleGroupBlackout,
   toggleGroupExclusive,
   toggleGroupStrobeFlash,
+  setGroupTimedEnabled,
+  setGroupTimedSeconds,
+  fireGroupTimed,
 } from '../redux/groupControlSlice'
 import {
   countDiscoBallAimedFixturesInGroup,
@@ -41,6 +45,11 @@ import {
   isGroupControlActive,
   isGroupDiscoBallActive,
   isGroupOverridingScene,
+  isGroupTimedActive,
+  groupTimedRemainingMs,
+  clampGroupTimedSeconds,
+  MIN_TIMED_SECONDS,
+  MAX_TIMED_SECONDS,
   wheelSlotIndex,
   type GroupControl,
   type GroupWheel,
@@ -59,6 +68,33 @@ const BLINDER_FADE_OPTIONS = [0, 0.25, 0.5, 1, 2, 4, 8]
  * one per selector call makes every untouched card re-render on every store action.
  */
 const EMPTY_GROUP_CONTROL: GroupControl = Object.freeze(initGroupControl())
+
+/**
+ * A clock that runs only while this card's gate is open.
+ *
+ * A gate shuts because a deadline passed, so nothing dispatches and nothing re-renders
+ * on its own — the countdown would freeze and the button would sit there claiming to be
+ * running. Reseeded whenever the deadline changes so the first render after a press is
+ * judged against a fresh reading rather than whenever this card last happened to tick,
+ * and the interval stops the moment the gate reads shut.
+ */
+function useTimedGateNow(control: GroupControl): number {
+  const until = control.timedUntilMs
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    setNowMs(Date.now())
+  }, [until])
+
+  const running = isGroupTimedActive(control, nowMs)
+  useEffect(() => {
+    if (!running) return
+    const handle = setInterval(() => setNowMs(Date.now()), 100)
+    return () => clearInterval(handle)
+  }, [running])
+
+  return nowMs
+}
 
 /** MIDI binding for one fader on a group card. */
 type MidiFaderAction = {
@@ -180,7 +216,12 @@ function Header({ groupCount }: { groupCount: number }) {
         (control) =>
           control?.strobeEnabled === true ||
           control?.exclusiveEnabled === true ||
-          control?.blinderActive === true
+          control?.blinderActive === true ||
+          control?.blackoutActive === true ||
+          // A deadline still outstanding, judged without a clock: this only decides
+          // whether Release all is enabled, and clearing a gate that has just shut on
+          // its own costs nothing.
+          (control?.timedEnabled === true && (control?.timedUntilMs ?? 0) > 0)
       ).length
   )
   // Selected as a joined string, not an array: a fresh array compares unequal every
@@ -195,6 +236,20 @@ function Header({ groupCount }: { groupCount: number }) {
   const soloGroups = useMemo(
     () => (soloGroupKey.length === 0 ? [] : soloGroupKey.split('\n')),
     [soloGroupKey]
+  )
+  // Same joined-string trick, and worth the second selector: a locked blackout is the
+  // one override a scene change leaves standing, so the page has to say so rather than
+  // leaving a dead group to be discovered from the room.
+  const blackoutGroupKey = useTypedSelector((state) =>
+    Object.entries(state.groupControl.byGroup)
+      .filter(([, control]) => control?.blackoutActive === true)
+      .map(([group]) => group)
+      .sort()
+      .join('\n')
+  )
+  const blackoutGroups = useMemo(
+    () => (blackoutGroupKey.length === 0 ? [] : blackoutGroupKey.split('\n')),
+    [blackoutGroupKey]
   )
 
   return (
@@ -234,8 +289,17 @@ function Header({ groupCount }: { groupCount: number }) {
           SOLO: {soloGroups.join(', ')}
         </SoloWarning>
       ) : null}
+      {blackoutGroups.length > 0 ? (
+        <BlackoutWarning
+          title={`Blacked out: ${blackoutGroups.join(
+            ', '
+          )} — held dark, and a locked blackout stays down across scene changes until you Release it`}
+        >
+          BLACK: {blackoutGroups.join(', ')}
+        </BlackoutWarning>
+      ) : null}
       <ButtonMidiOverlay action={{ type: 'releaseAllGroupOverrides' }}>
-        <BriefTooltip title="Drop every live override on every group — strobes, solos, blinders and any locks holding them. Brightness trims are left alone. Assign it to a MIDI pad: this is the panic button.">
+        <BriefTooltip title="Drop every live override on every group — strobes, solos, blinders, blackouts, running timed gates and any locks holding them. Brightness trims are left alone. Assign it to a MIDI pad: this is the panic button.">
           <span>
             <Button
               disabled={liveCount === 0}
@@ -360,7 +424,10 @@ function GroupCard({
 
   const isActive = isGroupControlActive(control)
   const locked =
-    control.strobeLocked || control.exclusiveLocked || control.blinderLocked
+    control.strobeLocked ||
+    control.exclusiveLocked ||
+    control.blinderLocked ||
+    control.blackoutLocked
   const wheelsArmed = control.goboEnabled === true
   // Bright and Strobe are always there; everything else depends on what the group
   // holds. The card widens per fader rather than stacking a second row, so every
@@ -379,6 +446,9 @@ function GroupCard({
   // actually doing, so a fader parked in the dead zone reads 0%.
   const discoBallPosition = groupDiscoBallPosition(control)
   const discoBallLevel = groupDiscoBallLevel(control)
+  const timedNowMs = useTimedGateNow(control)
+  const timedRunning = isGroupTimedActive(control, timedNowMs)
+  const timedRemainingMs = groupTimedRemainingMs(control, timedNowMs)
 
   return (
     <Card $active={isActive} $faderCount={faderCount}>
@@ -429,6 +499,49 @@ function GroupCard({
             aria-label={`${group} fader overrides the scene`}
           />
           <OptionLabel $alert={overriding}>fader overrides scene</OptionLabel>
+        </OptionRow>
+      </BriefTooltip>
+
+      <BriefTooltip title="Gate this group behind a timed Go button: it is held dark until you fire it, runs from its own fader for the time set here, and shuts itself again. For the things you fire rather than programme — a fogger, a confetti blast — where being left running is the failure that matters. The fader drives the master/dimmer channel directly, so it works on fixtures no scene addresses.">
+        <OptionRow>
+          <OptionBox
+            type="checkbox"
+            checked={control.timedEnabled === true}
+            onChange={(event) =>
+              dispatch(
+                setGroupTimedEnabled({
+                  group,
+                  enabled: event.target.checked,
+                })
+              )
+            }
+            aria-label={`${group} is gated by a timer`}
+          />
+          <OptionLabel $alert={control.timedEnabled === true}>
+            timed gate
+          </OptionLabel>
+          {control.timedEnabled === true ? (
+            <>
+              <TimedSecondsInput
+                type="number"
+                min={MIN_TIMED_SECONDS}
+                max={MAX_TIMED_SECONDS}
+                step={0.5}
+                value={control.timedSeconds}
+                onChange={(event) =>
+                  dispatch(
+                    setGroupTimedSeconds({
+                      group,
+                      seconds: clampGroupTimedSeconds(Number(event.target.value)),
+                    })
+                  )
+                }
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`${group} timed run length in seconds`}
+              />
+              <OptionLabel $alert={false}>s</OptionLabel>
+            </>
+          ) : null}
         </OptionRow>
       </BriefTooltip>
 
@@ -531,6 +644,31 @@ function GroupCard({
       </FaderRow>
 
       <CardFooter>
+        {control.timedEnabled === true ? (
+          <ButtonMidiOverlay action={{ type: 'setGroupTimed', group }}>
+            <BriefTooltip
+              title={
+                timedRunning
+                  ? `Running — ${(timedRemainingMs / 1000).toFixed(
+                      1
+                    )}s left, then this group shuts on its own. Press again to stop it now.`
+                  : `Fire this group for ${control.timedSeconds}s, driven from its own fader, then shut it again. Held dark until you do. Assign to a MIDI pad.`
+              }
+            >
+              <TimedButton
+                $active={timedRunning}
+                size="small"
+                onClick={() =>
+                  dispatch(fireGroupTimed({ group, nowMs: Date.now() }))
+                }
+              >
+                {timedRunning
+                  ? `${(timedRemainingMs / 1000).toFixed(1)}s`
+                  : 'Go'}
+              </TimedButton>
+            </BriefTooltip>
+          </ButtonMidiOverlay>
+        ) : null}
         <ButtonMidiOverlay action={{ type: 'setGroupExclusive', group }}>
           <BriefTooltip
             title={
@@ -565,6 +703,24 @@ function GroupCard({
             >
               Blind
             </BlinderButton>
+          </BriefTooltip>
+        </ButtonMidiOverlay>
+        <ButtonMidiOverlay action={{ type: 'setGroupBlackout', group }}>
+          <BriefTooltip
+            title={
+              control.blackoutLocked
+                ? 'Blackout locked on: this group is dead and stays dead through scene changes, unlike the other locks. Press Release to hand it back.'
+                : 'Hold to kill this group: every fixture in it goes dark whatever the scene, its own faders or a solo are doing. To lock it on, hold it and tap Release — or hold Release and press it; a locked blackout survives scene changes, so only Release or Release all takes it back. Assign to a MIDI pad to hold it momentarily.'
+            }
+          >
+            <BlackoutButton
+              $active={control.blackoutActive}
+              $locked={control.blackoutLocked}
+              size="small"
+              onClick={() => dispatch(toggleGroupBlackout(group))}
+            >
+              Black
+            </BlackoutButton>
           </BriefTooltip>
         </ButtonMidiOverlay>
         <ButtonMidiOverlay action={{ type: 'setGroupStrobeFlash', group }}>
@@ -612,10 +768,15 @@ function releaseTooltip(control: GroupControl): string {
     control.strobeLocked ? 'Strobe' : null,
     control.exclusiveLocked ? 'Solo' : null,
     control.blinderLocked ? 'Blind' : null,
+    control.blackoutLocked ? 'Black' : null,
   ].filter((name): name is string => name !== null)
 
   if (lockedNames.length > 0) {
-    return `${formatList(lockedNames)} locked on: still up with the pad let go. Tap to unlock and hand it back — or hold this and press another pad to add that one to the lock.`
+    return `${formatList(lockedNames)} locked on: still up with the pad let go. Tap to unlock and hand it back — or hold this and press another pad to add that one to the lock.${
+      control.blackoutLocked
+        ? ' A locked blackout is the one that outlives a scene change, so this is the only way it comes down.'
+        : ''
+    }`
   }
   if (control.goboEnabled === true) {
     return "Tap to hand this group's wheels and strobe back to the scene — the gobo goes back to whatever the scene is playing and the Gobo fader drops to open, while Prism and Spin keep their positions. Held on a pad it locks instead: anything pressed while it is down locks on, as does anything already held when you tap it. Assignable to a MIDI pad."
@@ -867,6 +1028,26 @@ const SoloWarning = styled.div`
   white-space: nowrap;
 `
 
+/**
+ * Reads as the thing it does — a dead group — rather than borrowing the solo's orange.
+ * Same chip geometry, so the two sit together in the header without arguing.
+ */
+const BlackoutWarning = styled.div`
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04rem;
+  color: #e6ebf2;
+  background: #202429;
+  border: 1px solid #c2c9d4;
+  border-radius: 0.2rem;
+  padding: 0.1rem 0.4rem;
+  margin-right: 0.5rem;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
 const BlinderSpeedCluster = styled.div`
   display: flex;
   align-items: center;
@@ -1074,6 +1255,62 @@ const BlinderButton = styled(Button)<{ $active: boolean; $locked?: boolean }>`
 
     &:hover {
       background: ${(p) => (p.$active ? '#ffffff' : '#ffffff33')};
+    }
+  }
+`
+
+const TimedSecondsInput = styled.input`
+  width: 3rem;
+  margin-left: 0.3rem;
+  background: #ffffff14;
+  color: inherit;
+  border: 1px solid #ffffff33;
+  border-radius: 0.2rem;
+  font-size: 0.62rem;
+  padding: 0.05rem 0.2rem;
+`
+
+/**
+ * Green while running, because the one thing this button has to answer across a dark
+ * room is whether the thing is currently going. The countdown sits in the label, so the
+ * card says how long is left without a second readout.
+ */
+const TimedButton = styled(Button)<{ $active: boolean }>`
+  && {
+    min-width: 2.6rem;
+    font-size: 0.7rem;
+    padding: 0.05rem 0.45rem;
+    font-variant-numeric: tabular-nums;
+    color: ${(p) => (p.$active ? '#0e1a10' : '#9fe0a8')};
+    background: ${(p) => (p.$active ? '#6fdc86' : '#6fdc8622')};
+    border: 1px solid ${(p) => (p.$active ? '#6fdc86' : '#6fdc8666')};
+
+    &:hover {
+      background: ${(p) => (p.$active ? '#8be79c' : '#6fdc8633')};
+    }
+  }
+`
+
+/**
+ * The blinder's opposite, and drawn that way: engaged it goes to near-black with a
+ * light ring, where every other button on the card inverts to a bright fill. A control
+ * that kills lights must not be the brightest thing on the card.
+ */
+const BlackoutButton = styled(Button)<{ $active: boolean; $locked: boolean }>`
+  && {
+    min-width: 0;
+    font-size: 0.7rem;
+    padding: 0.05rem 0.45rem;
+    color: ${(p) => (p.$active ? '#ffffff' : '#c2c9d4')};
+    background: ${(p) => (p.$active ? '#101216' : '#c2c9d422')};
+    /* Locked takes the lock amber ring the other pads use, so a standing blackout
+       reads differently from a pad being held — and it is the one lock that can still
+       be there several scenes later. */
+    border: 1px solid
+      ${(p) => (p.$locked ? '#ffd479' : p.$active ? '#c2c9d4' : '#c2c9d466')};
+
+    &:hover {
+      background: ${(p) => (p.$active ? '#1c2026' : '#c2c9d433')};
     }
   }
 `

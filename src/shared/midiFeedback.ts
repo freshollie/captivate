@@ -1,4 +1,5 @@
 import { CleanReduxState } from '../renderer/redux/store'
+import { isGroupTimedActive } from './groupControl'
 import type { GroupControl, GroupControlState } from './groupControl'
 
 /**
@@ -35,6 +36,10 @@ function exclusiveActive(control: GroupControl | undefined): boolean {
   return control?.exclusiveEnabled === true || control?.exclusiveLocked === true
 }
 
+function blackoutActive(control: GroupControl | undefined): boolean {
+  return control?.blackoutActive === true || control?.blackoutLocked === true
+}
+
 /**
  * Release lights when it has something to release: a lock standing on this group, or a
  * wheel override armed on it.
@@ -53,6 +58,9 @@ function hasReleasableOverride(control: GroupControl | undefined): boolean {
     control?.strobeLocked === true ||
     control?.blinderLocked === true ||
     control?.exclusiveLocked === true ||
+    // The one lock a scene change does not drop, so this lamp may be the only thing
+    // still saying the group is dead several looks after it was killed.
+    control?.blackoutLocked === true ||
     control?.goboEnabled === true
   )
 }
@@ -73,11 +81,28 @@ function anyGroupHasReleasableOverride(
  * answers on is the device profile's job, not this function's.
  */
 export function computeMidiFeedbackState(
-  state: CleanReduxState
+  state: CleanReduxState,
+  /**
+   * Wall clock the timed gates are judged against. Defaulted rather than required
+   * because every other lamp here reads pure state; only the gate has a deadline.
+   */
+  nowMs: number = Date.now()
 ): Map<string, boolean> {
   const lamps = new Map<string, boolean>()
   const groupControl = state.groupControl
   const master = groupControl?.master
+
+  /**
+   * Fold one bound control into its pad's lamp.
+   *
+   * Several actions can share an input, and the pad has one lamp between them, so it
+   * answers "is anything on this pad doing something" rather than reporting whichever
+   * binding happened to be visited last. Lit if any of them is up, which keeps the dark
+   * state meaning what it should: nothing on this pad is standing.
+   */
+  const lamp = (inputID: string, lit: boolean) => {
+    lamps.set(inputID, lamps.get(inputID) === true || lit)
+  }
 
   for (const buttonAction of Object.values(
     state.control.device.buttonActions
@@ -86,21 +111,25 @@ export function computeMidiFeedbackState(
     const id = buttonAction.inputID
 
     if (action.type === 'setGroupStrobeFlash') {
-      lamps.set(id, strobeActive(groupOf(groupControl, action.group)))
+      lamp(id, strobeActive(groupOf(groupControl, action.group)))
     } else if (action.type === 'setGroupBlinder') {
-      lamps.set(id, blinderActive(groupOf(groupControl, action.group)))
+      lamp(id, blinderActive(groupOf(groupControl, action.group)))
+    } else if (action.type === 'setGroupBlackout') {
+      lamp(id, blackoutActive(groupOf(groupControl, action.group)))
+    } else if (action.type === 'setGroupTimed') {
+      lamp(id, isGroupTimedActive(groupOf(groupControl, action.group), nowMs))
     } else if (action.type === 'setGroupExclusive') {
-      lamps.set(id, exclusiveActive(groupOf(groupControl, action.group)))
+      lamp(id, exclusiveActive(groupOf(groupControl, action.group)))
     } else if (action.type === 'releaseGroupStrobe') {
-      lamps.set(id, hasReleasableOverride(groupOf(groupControl, action.group)))
+      lamp(id, hasReleasableOverride(groupOf(groupControl, action.group)))
     } else if (action.type === 'setGroupMasterStrobe') {
-      lamps.set(id, master?.strobeActive === true)
+      lamp(id, master?.strobeActive === true)
     } else if (action.type === 'setGroupMasterBlinder') {
-      lamps.set(id, master?.blinderActive === true)
+      lamp(id, master?.blinderActive === true)
     } else if (action.type === 'releaseAllGroupOverrides') {
       // The rig-wide Release: lit whenever any group is holding something for it to
       // drop — a lock, or a wheel override.
-      lamps.set(id, anyGroupHasReleasableOverride(groupControl))
+      lamp(id, anyGroupHasReleasableOverride(groupControl))
     }
   }
 

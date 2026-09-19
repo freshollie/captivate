@@ -26,6 +26,7 @@ import { MixerState } from 'renderer/redux/mixerSlice'
 import {
   clampBlinderFadeBeats,
   clampGroupStrobeValue,
+  clampGroupTimedSeconds,
   initGroupControlState,
   DEFAULT_BLINDER_FADE_BEATS,
   DEFAULT_STROBE_FLASH_LEVEL,
@@ -1370,11 +1371,12 @@ export function fixGroupControlState(
       ? clampGroupStrobeValue(control.strobeFlashLevel)
       : DEFAULT_STROBE_FLASH_LEVEL
 
-    // Live overrides are never restored. Solo, blinder and flash are momentary
-    // gestures; a note-off that never arrived would otherwise be written into the
-    // project and reopen the show with the rig blacked out or blinding. Only what
-    // sits on a fader — the brightness trim, the disco blend and the remembered
-    // flash level — persists.
+    // Live overrides are never restored. Solo, blinder, blackout and flash are
+    // momentary gestures; a note-off that never arrived would otherwise be written
+    // into the project and reopen the show with the rig blacked out or blinding. Only
+    // what sits on a fader — the brightness trim, the disco blend and the remembered
+    // flash level — persists. A locked blackout survives a scene change but not this:
+    // outliving the look it was set for is the point, outliving the session is not.
     next.byGroup[name] = {
       brightness,
       // A fader position rather than a gesture, so it survives the same way the
@@ -1404,6 +1406,9 @@ export function fixGroupControlState(
       blinderActive: false,
       blinderHeld: false,
       blinderLocked: false,
+      blackoutActive: false,
+      blackoutHeld: false,
+      blackoutLocked: false,
       releaseHeld: false,
       releaseUsedForLock: false,
       // Opt-out, so a group written before the master existed still follows it.
@@ -1416,6 +1421,13 @@ export function fixGroupControlState(
       // A setting rather than a gesture, so it persists — and opt-in, so a project
       // written before it existed keeps every group on the scene.
       overrideScene: control.overrideScene === true,
+      // Settings too: a group configured as a fogger is still one next time. Whether
+      // it happens to be *running* is not — a deadline written into a project would
+      // reopen the show either with fog already pouring or, worse, with a stale
+      // deadline that reads as open until the clock catches up.
+      timedEnabled: control.timedEnabled === true,
+      timedSeconds: clampGroupTimedSeconds(control.timedSeconds),
+      timedUntilMs: 0,
     }
   }
 

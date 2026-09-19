@@ -162,11 +162,13 @@ export function handleMessage(
     return
   }
 
-  const buttonAction = Object.entries(midiState.buttonActions).find(
-    ([_actionId, action]) => action.inputID === input.id
-  )?.[1]
+  // Every action bound to this input fires, not just the first: one pad can drive a
+  // macro — Black on three groups, or a solo and a scene change together. Each binding
+  // keeps its own `actionKey` below, so two momentary actions sharing a pad track their
+  // press state separately and cannot desync.
+  for (const buttonAction of Object.values(midiState.buttonActions)) {
+    if (buttonAction.inputID !== input.id) continue
 
-  if (buttonAction) {
     const actionKey = `${input.id}:${getActionID(buttonAction.action)}`
     const isMomentary = momentaryMidiActionTypes.has(buttonAction.action.type)
 
@@ -216,12 +218,37 @@ export function handleMessage(
     }
   }
 
-  const sliderAction = Object.entries(midiState.sliderActions).find(
-    ([_actionId, action]) => action.inputID === input.id
-  )?.[1]
+  // Same again for faders, and for the same reason: one CC can drive several.
+  for (const sliderAction of Object.values(midiState.sliderActions)) {
+    if (sliderAction.inputID !== input.id) continue
+    applySliderAction(
+      sliderAction,
+      input,
+      state,
+      rt_state,
+      nodeLink,
+      dispatch,
+      tapTempo
+    )
+  }
+}
 
-  if (!sliderAction) return
-
+/**
+ * Drive one bound fader from one MIDI message.
+ *
+ * Its own function because several sliders can share an input: the early returns below
+ * have to skip *this* binding and let the next one run, which is what they do here and
+ * is exactly what they could not do while this was inline in the message handler.
+ */
+function applySliderAction(
+  sliderAction: SliderAction,
+  input: MidiInput,
+  state: CleanReduxState,
+  rt_state: RealtimeState,
+  nodeLink: NodeLink,
+  dispatch: (action: PayloadAction<any>) => void,
+  tapTempo: () => void
+): void {
   const action = sliderAction.action
   const options = normalizeOptions(action, sliderAction.options)
   const range = options.max - options.min

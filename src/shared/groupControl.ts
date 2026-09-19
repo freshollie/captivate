@@ -179,6 +179,34 @@ export interface GroupControl {
    */
   blinderLocked: boolean
   /**
+   * Blackout. While held, every light in the group is driven dark whatever the scene,
+   * the group's own faders or a solo are doing — the inverse of the blinder, and the
+   * one control that answers "not these, not now". Momentary by default, and lockable
+   * on the same gesture as the strobe, the solo and the blinder.
+   *
+   * The one thing it does not answer to is the scene. A locked strobe, solo or blinder
+   * is a flourish on the look being played, so the next light scene drops it; a
+   * blackout is a statement about the rig — a dead fixture, a bar nobody wants lit
+   * through the speeches — and handing it back on a scene change would light exactly
+   * the lights that were deliberately killed. Release and Release all are the only
+   * ways down.
+   */
+  blackoutActive: boolean
+  /**
+   * True only while a *press* is holding Black down. The strobe's `strobeFlashHeld`
+   * in every respect; see it for why an on-screen click deliberately does not count.
+   */
+  blackoutHeld: boolean
+  /**
+   * Keeps the blackout up after the pad is let go. Set by tapping Release while
+   * holding Black, or the other way round.
+   *
+   * Alone among the locks it outlives a light-scene change — see {@link
+   * blackoutActive} — so the card keeps its ring and the Release lamp stays lit for as
+   * long as it stands, which is what stops a killed group being quietly forgotten.
+   */
+  blackoutLocked: boolean
+  /**
    * True while this group's Release pad is down. Held, Release stops meaning release
    * and becomes the lock modifier: whatever is pressed while it is down locks on.
    */
@@ -202,6 +230,39 @@ export interface GroupControl {
    * strobed or blinded from the master (house lights, practicals).
    */
   followMasterHotkeys: boolean
+  /**
+   * Whether this group is gated by a timed Go button rather than left free-running.
+   *
+   * A valve, not a look: while it is off the group's lights are held at nothing, and
+   * pressing Go opens them for {@link timedSeconds} and then shuts them again on its
+   * own. Built for the things you fire rather than program — a fogger, a confetti
+   * blast, a strobe bank nobody should be able to leave running — where the failure
+   * mode of forgetting about it is worse than the failure mode of it stopping early.
+   *
+   * A setting, so it persists: a group configured as a fogger is still a fogger next
+   * time the show opens. What does not persist is whether it happens to be running.
+   */
+  timedEnabled: boolean
+  /**
+   * How long one press of Go runs for, in seconds. Only meaningful with
+   * {@link timedEnabled} up, and clamped to {@link MIN_TIMED_SECONDS}..{@link
+   * MAX_TIMED_SECONDS}.
+   */
+  timedSeconds: number
+  /**
+   * Wall-clock ms at which the current run ends, or 0 when the group is shut.
+   *
+   * A deadline rather than a flag and a timer, because the thing that has to agree
+   * about it is the DMX engine in another process: it reads this state every frame and
+   * can simply compare, where a `setTimeout` living in one window would leave the other
+   * to guess — and would strand the gate open if the window holding it went away.
+   *
+   * `Date.now()` rather than `performance.now()` for the same reason: the engine's
+   * monotonic clock starts at a different epoch in each process, so only the wall clock
+   * means the same thing on both sides. {@link isGroupTimedActive} is the only thing
+   * that should read this; it carries the guard for a clock that moves underneath.
+   */
+  timedUntilMs: number
   /**
    * Take the group off the scene entirely: the brightness fader stops scaling what
    * the scene produced and drives the fixtures directly, to white at whatever level
@@ -398,11 +459,83 @@ export function initGroupControl(): GroupControl {
     blinderActive: false,
     blinderHeld: false,
     blinderLocked: false,
+    blackoutActive: false,
+    blackoutHeld: false,
+    blackoutLocked: false,
     releaseHeld: false,
     releaseUsedForLock: false,
     followMasterHotkeys: true,
     overrideScene: false,
+    timedEnabled: false,
+    timedSeconds: DEFAULT_TIMED_SECONDS,
+    timedUntilMs: 0,
   }
+}
+
+export const DEFAULT_TIMED_SECONDS = 5
+export const MIN_TIMED_SECONDS = 0.5
+export const MAX_TIMED_SECONDS = 600
+
+export function clampGroupTimedSeconds(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_TIMED_SECONDS
+  return Math.min(MAX_TIMED_SECONDS, Math.max(MIN_TIMED_SECONDS, value))
+}
+
+/**
+ * How far past the deadline a clock jump is tolerated before the gate is called shut.
+ *
+ * The wall clock can move under a running gate — an NTP correction, a laptop waking up
+ * — and a jump backwards would otherwise leave a fogger running for however long the
+ * clock lost. Anything claiming more time left than a full run could ever have is read
+ * as a jump and shut, so the damage from a moving clock is always in the safe
+ * direction: the gate closes early rather than late.
+ */
+const TIMED_CLOCK_SLACK_MS = 1000
+
+/** Whether this group's timed gate is open right now. */
+export function isGroupTimedActive(
+  control: GroupControl | null | undefined,
+  nowMs: number
+): boolean {
+  if (control === null || control === undefined) return false
+  if (control.timedEnabled !== true) return false
+  const until = control.timedUntilMs
+  if (!Number.isFinite(until) || until <= 0) return false
+  const remaining = until - nowMs
+  if (remaining <= 0) return false
+  const runMs = clampGroupTimedSeconds(control.timedSeconds) * 1000
+  return remaining <= runMs + TIMED_CLOCK_SLACK_MS
+}
+
+/**
+ * Whether any group has a timed gate that could shut on its own.
+ *
+ * A gate closes because a deadline passed, not because anything dispatched, so the
+ * things that only refresh on a state change — the controller lamps above all — have to
+ * be told to look again while one is outstanding. Cheap enough to ask every frame, and
+ * false for every rig that has no timed group at all.
+ */
+export function anyGroupTimedPending(
+  state: GroupControlState | null | undefined
+): boolean {
+  const byGroup = safeByGroup(state)
+  for (const control of Object.values(byGroup)) {
+    if (control === undefined) continue
+    if (control.timedEnabled !== true) continue
+    if (Number.isFinite(control.timedUntilMs) && control.timedUntilMs > 0) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Milliseconds left on an open gate, or 0 when it is shut. For the countdown. */
+export function groupTimedRemainingMs(
+  control: GroupControl | null | undefined,
+  nowMs: number
+): number {
+  if (!isGroupTimedActive(control, nowMs)) return 0
+  return Math.max(0, (control as GroupControl).timedUntilMs - nowMs)
 }
 
 /**
@@ -559,12 +692,15 @@ export function isGroupControlActive(
     // An overriding group is holding its fixtures off the scene at every fader
     // position, full included, so it is always doing something.
     isGroupOverridingScene(control) ||
+    // Same for a timed group: shut is not idle, it is holding its lights at nothing.
+    control.timedEnabled === true ||
     isGroupBrightnessActive(control) ||
     isGroupDiscoBallActive(control) ||
     control.goboEnabled === true ||
     control.strobeEnabled === true ||
     control.exclusiveEnabled === true ||
-    control.blinderActive === true
+    control.blinderActive === true ||
+    control.blackoutActive === true
   )
 }
 
@@ -575,6 +711,16 @@ export function blindingGroupNames(
   const byGroup = safeByGroup(state)
   return Object.keys(byGroup)
     .filter((group) => byGroup[group]?.blinderActive === true)
+    .sort()
+}
+
+/** Group names currently blacked out, in stable order. */
+export function blackedOutGroupNames(
+  state: GroupControlState | null | undefined
+): string[] {
+  const byGroup = safeByGroup(state)
+  return Object.keys(byGroup)
+    .filter((group) => byGroup[group]?.blackoutActive === true)
     .sort()
 }
 
@@ -952,6 +1098,64 @@ function applyExclusiveBlackout(
     if (keptPartitions.has(fixture)) continue
     const id = fixture.fixtureId?.trim()
     if (id !== undefined && id.length > 0 && keptFixtureIds.has(id)) continue
+    blackoutFixtureIntensity(channels, fixture)
+  }
+}
+
+/**
+ * Which *light* a partition belongs to — the unit a blackout has to reach all of.
+ *
+ * `flatten_fixture` cuts every fixture into partitions by channel family, so a head's
+ * pan/tilt, its dimmer and its emitters are three separate entries sharing one
+ * `fixtureId`. A subfixture is a light in its own right, though: it can be put in a
+ * group on its own, so it keeps its own key rather than folding into the parent's.
+ *
+ * Null for a fixture with no id, which can only be matched partition by partition.
+ */
+function lightKeyOf(fixture: FlattenedFixture): string | null {
+  const id = fixture.fixtureId?.trim()
+  if (id === undefined || id.length === 0) return null
+  return `${id}\u0000${fixture.subFixtureIndex ?? -1}`
+}
+
+/**
+ * Hold the blacked-out groups dark.
+ *
+ * Membership is resolved per light rather than per partition, the mirror of the solo
+ * blackout above and for the same reason: a virtual group like `Movers` matches only
+ * the partition carrying pan/tilt, and darkening that one alone would write nothing at
+ * all — the dimmer and the emitters live in partitions of their own. Resolving per
+ * *light* rather than per fixture is what keeps a group naming one head of a bar from
+ * blacking out the whole bar.
+ *
+ * Written after the solo, so a blacked-out group stays dark even when it is the group
+ * being soloed: the operator asked for both, and only one of them can be honoured.
+ * Nothing is stored — drop the blackout and the scene shows through again.
+ */
+function applyGroupBlackout(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined
+): void {
+  const groups = blackedOutGroupNames(groupControl)
+  if (groups.length === 0) return
+
+  const darkPartitions = new Set<FlattenedFixture>()
+  const darkLights = new Set<string>()
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, groups)
+  for (const group of groups) {
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
+      darkPartitions.add(fixture)
+      const key = lightKeyOf(fixture)
+      if (key !== null) darkLights.add(key)
+    }
+  }
+
+  for (const fixture of universeFixtures) {
+    if (!darkPartitions.has(fixture)) {
+      const key = lightKeyOf(fixture)
+      if (key === null || !darkLights.has(key)) continue
+    }
     blackoutFixtureIntensity(channels, fixture)
   }
 }
@@ -1361,6 +1565,104 @@ function applySceneOverrides(
 }
 
 /**
+ * Write one fixture's master/dimmer channels at `level`, leaving everything else alone.
+ *
+ * Deliberately narrower than `driveFixtureWhite`: the timed gate is a valve on a
+ * fixture's output rather than a look. A fogger has a level channel and nothing else to
+ * say, and on a group of lamps the scene keeps its colour and position while the gate
+ * decides only whether they are on at all.
+ *
+ * A fixture with no dimmer has nowhere to put a level, so an open gate leaves it to the
+ * scene — see {@link applyTimedGate}, which still holds it dark while the gate is shut.
+ */
+function driveFixtureMasterLevel(
+  channels: number[],
+  fixture: FlattenedFixture,
+  level: number
+): void {
+  for (const [channelIdx, channel] of fixture.channels) {
+    const master = masterRangeOf(channel)
+    if (master === null) continue
+    writeChannel(
+      channels,
+      channelIdx,
+      master.isOnOff
+        ? level > 0.5
+          ? master.max
+          : master.min
+        : master.min + (master.max - master.min) * level
+    )
+  }
+}
+
+/**
+ * Open or shut the timed groups.
+ *
+ * Shut, the group is held at nothing, the same write the Black button makes. Open, its
+ * own fader drives the master channel directly — not scaled against the scene, because
+ * the fixtures this is for are the ones no scene addresses: a fader scaling a scene
+ * value of zero would leave a fogger dead at every position.
+ *
+ * Membership resolves per light, as the blackout does, so a gate on a virtual group
+ * like `Movers` reaches the dimmer partition rather than only the one carrying pan and
+ * tilt. A fixture gated by two timed groups is open if either is running and takes the
+ * brighter level, the highest-takes-precedence rule the faders already use.
+ *
+ * Placed beside `applySceneOverrides`, before the master: a gate is one more way of
+ * driving a group off its own fader, and the master dimmer trims it like the rest of
+ * the rig. Solo, Black and the blinder all still land on top of it.
+ */
+function applyTimedGate(
+  channels: number[],
+  universeFixtures: FlattenedFixture[],
+  groupControl: GroupControlState | null | undefined,
+  nowMs: number
+): void {
+  const byGroup = safeByGroup(groupControl)
+  const groups = Object.keys(byGroup)
+    .filter((group) => byGroup[group]?.timedEnabled === true)
+    .sort()
+  if (groups.length === 0) return
+
+  const levelByFixture = new Map<FlattenedFixture, number>()
+  const levelByLight = new Map<string, number>()
+  const fixturesInGroup = fixturesByGroupName(universeFixtures, groups)
+
+  for (const group of groups) {
+    const control = byGroup[group]
+    if (control === null || control === undefined) continue
+    // `effectiveGroupBrightness` rather than the raw fader, so Flash and Solo pull an
+    // open gate to full the way they pull any other group.
+    const level = isGroupTimedActive(control, nowMs)
+      ? effectiveGroupBrightness(control)
+      : 0
+    for (const fixture of fixturesInGroup.get(group) ?? []) {
+      const seen = levelByFixture.get(fixture)
+      if (seen === undefined || level > seen) levelByFixture.set(fixture, level)
+      const key = lightKeyOf(fixture)
+      if (key === null) continue
+      const seenLight = levelByLight.get(key)
+      if (seenLight === undefined || level > seenLight) levelByLight.set(key, level)
+    }
+  }
+
+  for (const fixture of universeFixtures) {
+    let level = levelByFixture.get(fixture)
+    if (level === undefined) {
+      const key = lightKeyOf(fixture)
+      if (key === null) continue
+      level = levelByLight.get(key)
+      if (level === undefined) continue
+    }
+    if (level <= 0) {
+      blackoutFixtureIntensity(channels, fixture)
+      continue
+    }
+    driveFixtureMasterLevel(channels, fixture, level)
+  }
+}
+
+/**
  * Layer the master dimmer and strobe over the groups below them.
  *
  * The dimmer multiplies whatever the group faders already produced, so the two
@@ -1458,6 +1760,12 @@ export function applyGroupControlsToUniverse(
   options: {
     /** Head being aimed by hand on the Movers page — left out of the disco blend. */
     calibratingFixtureId?: string
+    /**
+     * Wall clock the timed gates are judged against, passed in so every universe in a
+     * frame agrees on it. `Date.now()`, never `performance.now()` — see
+     * `GroupControl.timedUntilMs`.
+     */
+    nowMs?: number
   } = {}
 ): void {
   const hasBlinder = Object.keys(blinderLevels).length > 0
@@ -1495,6 +1803,14 @@ export function applyGroupControlsToUniverse(
     overridingGroupNames(groupControl)
   )
 
+  // A timed group is driven off its own fader too, and held dark between runs.
+  applyTimedGate(
+    channels,
+    universeFixtures,
+    groupControl,
+    options.nowMs ?? Date.now()
+  )
+
   // The master layers on top of the per-group faders, never replacing them.
   applyMaster(channels, universeFixtures, groupControl)
 
@@ -1512,7 +1828,9 @@ export function applyGroupControlsToUniverse(
 
   // Solo wins over any level the faders above just set...
   applyExclusiveBlackout(channels, universeFixtures, groupControl)
-  // ...and the blinder wins over everything, including a solo blackout.
+  // ...a blacked-out group is dark even inside the solo that kept it...
+  applyGroupBlackout(channels, universeFixtures, groupControl)
+  // ...and the blinder wins over everything, either blackout included.
   applyBlinder(channels, universeFixtures, groupControl, blinderLevels)
 }
 

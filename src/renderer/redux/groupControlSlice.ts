@@ -2,8 +2,10 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 import {
   clampBlinderFadeBeats,
   clampGroupStrobeValue,
+  clampGroupTimedSeconds,
   initGroupControl,
   initGroupControlState,
+  isGroupTimedActive,
   type GroupControl,
   type GroupControlState,
 } from '../../shared/groupControl'
@@ -67,6 +69,18 @@ function clearBlinder(control: GroupControl): void {
   control.blinderLocked = false
 }
 
+/** Everything that has to come down when a blackout is let go for good. */
+function clearBlackout(control: GroupControl): void {
+  control.blackoutActive = false
+  control.blackoutHeld = false
+  control.blackoutLocked = false
+}
+
+/** Shut a timed gate, whether it was running or already down. */
+function clearTimed(control: GroupControl): void {
+  control.timedUntilMs = 0
+}
+
 /**
  * Lock whatever pads are down, and report whether any were.
  *
@@ -88,21 +102,34 @@ function lockHeldControls(control: GroupControl): boolean {
     control.blinderLocked = control.blinderLocked !== true
     locked = true
   }
+  if (control.blackoutHeld === true) {
+    control.blackoutLocked = control.blackoutLocked !== true
+    locked = true
+  }
   return locked
 }
 
 /**
  * What Release does when it is not being used as a lock modifier.
  *
- * The strobe and the wheel override go back to the scene, and any *locked* solo or
- * blinder comes down with them — a lock has no other way down from this card. Ones merely held or latched are
- * left alone, as they always have been; that is what Release all is for.
+ * The strobe and the wheel override go back to the scene, and any *locked* solo,
+ * blinder or blackout comes down with them — a lock has no other way down from this
+ * card. Ones merely held or latched are left alone, as they always have been; that is
+ * what Release all is for.
+ *
+ * A locked blackout is the only one of the three that could still be standing from
+ * several scenes ago, since nothing but this and Release all takes it down, so this is
+ * usually the button that ends it.
  */
 function releaseGroup(control: GroupControl): void {
   clearStrobe(control)
   clearWheelOverride(control)
   if (control.exclusiveLocked === true) clearExclusive(control)
   if (control.blinderLocked === true) clearBlinder(control)
+  if (control.blackoutLocked === true) clearBlackout(control)
+  // A gate standing open is the loudest thing on the card — a fogger mid-run — and
+  // Release is the button an operator reaches for to stop a group doing something.
+  clearTimed(control)
 }
 
 function controlFor(state: GroupControlState, group: string): GroupControl {
@@ -316,6 +343,8 @@ export const groupControlSlice = createSlice({
         clearWheelOverride(control)
         clearExclusive(control)
         clearBlinder(control)
+        clearBlackout(control)
+        clearTimed(control)
         // A Release pad whose note-off never arrived would silently turn every later
         // press into a lock, so the panic button clears the modifier too.
         control.releaseHeld = false
@@ -367,6 +396,95 @@ export const groupControlSlice = createSlice({
           control.releaseUsedForLock = true
         }
       }
+    },
+    /**
+     * Momentary: hold to kill the group, let go to hand it straight back — unless the
+     * blackout was locked while the pad was down, which is the one thing that
+     * survives it.
+     */
+    setGroupBlackout: (
+      state,
+      { payload }: PayloadAction<{ group: string; pressed: boolean }>
+    ) => {
+      const control = controlFor(state, payload.group)
+      if (payload.pressed === true) {
+        control.blackoutActive = true
+        control.blackoutHeld = true
+        if (control.releaseHeld === true) {
+          control.blackoutLocked = true
+          control.releaseUsedForLock = true
+        }
+      } else if (control.blackoutLocked === true) {
+        // Still dark; just no longer held.
+        control.blackoutHeld = false
+      } else {
+        clearBlackout(control)
+      }
+    },
+    /** For inputs with no release to report — an on-screen click, a keyboard chord. */
+    toggleGroupBlackout: (state, { payload }: PayloadAction<string>) => {
+      const control = controlFor(state, payload)
+      if (control.blackoutActive) {
+        clearBlackout(control)
+      } else {
+        control.blackoutActive = true
+        // Latched, not held: nothing will report a release for a click, so this must
+        // not read as a pad being down.
+        control.blackoutHeld = false
+        if (control.releaseHeld === true) {
+          control.blackoutLocked = true
+          control.releaseUsedForLock = true
+        }
+      }
+    },
+    /**
+     * Whether this group is gated by a timed Go button.
+     *
+     * A setting, not a gesture: it survives Release, Release all and scene changes, the
+     * same way `overrideScene` does. Turning it on shuts the group immediately — the
+     * gate starts closed, which is the only safe way round for the things this is for.
+     */
+    setGroupTimedEnabled: (
+      state,
+      { payload }: PayloadAction<{ group: string; enabled: boolean }>
+    ) => {
+      const control = controlFor(state, payload.group)
+      control.timedEnabled = payload.enabled === true
+      clearTimed(control)
+    },
+    /** How long one press of Go runs for. Changing it never affects a run in progress. */
+    setGroupTimedSeconds: (
+      state,
+      { payload }: PayloadAction<{ group: string; seconds: number }>
+    ) => {
+      controlFor(state, payload.group).timedSeconds = clampGroupTimedSeconds(
+        payload.seconds
+      )
+    },
+    /**
+     * Go: open the gate for its configured run, or shut it if it is already open.
+     *
+     * A press while it is running stops it rather than extending it. The point of the
+     * control is that the group cannot be left running, so the button an operator hits
+     * when they want it to stop has to be the one already under their finger — and
+     * re-arming from shut is one more press, where recovering from "I could not turn it
+     * off" is a walk to the fogger.
+     *
+     * `nowMs` comes from the caller rather than the reducer so this stays pure and so
+     * both sides — a click here, a pad in the engine process — stamp the same clock.
+     */
+    fireGroupTimed: (
+      state,
+      { payload }: PayloadAction<{ group: string; nowMs: number }>
+    ) => {
+      const control = controlFor(state, payload.group)
+      if (control.timedEnabled !== true) return
+      if (isGroupTimedActive(control, payload.nowMs)) {
+        clearTimed(control)
+        return
+      }
+      control.timedUntilMs =
+        payload.nowMs + clampGroupTimedSeconds(control.timedSeconds) * 1000
     },
     setBlinderFadeBeats: (state, { payload }: PayloadAction<number>) => {
       state.blinderFadeBeats = clampBlinderFadeBeats(payload)
@@ -460,6 +578,18 @@ export const groupControlSlice = createSlice({
      * releases itself, and a lock, which this clears. A pad still down keeps its
      * control — letting go is what ends that — it just no longer has a lock to stand
      * on afterwards. Brightness is a rig trim rather than a look, so it survives.
+     *
+     * The blackout is the deliberate exception and is not touched here at all, locked
+     * or held. The others say something about the look being played, so the look
+     * changing ends them; a blackout says a group must not be lit — a dead fixture, a
+     * bar to keep dark through the speeches — and a scene change is no reason to
+     * believe that has stopped being true. Handing it back would light precisely the
+     * lights that were deliberately killed, at the moment nobody is watching the card.
+     * Release and Release all remain the ways down.
+     *
+     * A timed gate is left alone for the same reason and a stronger one: it is a
+     * physical process on a clock — fog in the air, a blast that has been fired — and
+     * the scene changing neither starts nor stops it. Its own timer is what ends it.
      */
     const releaseLocksOnLightSceneChange = (
       state: GroupControlState,
@@ -524,6 +654,11 @@ export const {
   toggleGroupExclusive,
   setGroupBlinder,
   toggleGroupBlinder,
+  setGroupBlackout,
+  toggleGroupBlackout,
+  setGroupTimedEnabled,
+  setGroupTimedSeconds,
+  fireGroupTimed,
   setBlinderFadeBeats,
 } = groupControlSlice.actions
 
