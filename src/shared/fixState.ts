@@ -26,6 +26,7 @@ import { MixerState } from 'renderer/redux/mixerSlice'
 import {
   clampBlinderFadeBeats,
   clampGroupStrobeValue,
+  clampGroupTimedReminderSeconds,
   clampGroupTimedSeconds,
   initGroupControlState,
   DEFAULT_BLINDER_FADE_BEATS,
@@ -1428,6 +1429,14 @@ export function fixGroupControlState(
       timedEnabled: control.timedEnabled === true,
       timedSeconds: clampGroupTimedSeconds(control.timedSeconds),
       timedUntilMs: 0,
+      timedReminderSeconds: clampGroupTimedReminderSeconds(
+        control.timedReminderSeconds
+      ),
+      // Cleared with the deadline, and for the same reason: a stamp from the last time
+      // this project was open would have every reminder overdue the moment it loads,
+      // so a show would start with pads flashing before anyone had touched anything.
+      // The first press — or setting the reminder — starts the cycle.
+      timedLastFiredAtMs: 0,
     }
   }
 

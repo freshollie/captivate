@@ -51,7 +51,11 @@ import {
   midiFeedbackChanges,
   MIDI_FEEDBACK_ENABLED,
 } from '../../shared/midiFeedback'
-import { anyGroupTimedPending } from '../../shared/groupControl'
+import {
+  anyGroupTimedActive,
+  anyGroupTimedReminderArmed,
+  timedFlashPhaseOn,
+} from '../../shared/groupControl'
 import { findMidiLedProfile, lampMessage } from '../../shared/midiLedProfile'
 import { MidiMessage, midiInputID } from '../../shared/midi'
 import { getAllParamKeys } from '../../renderer/redux/dmxSlice'
@@ -133,6 +137,19 @@ function syncNodeLinkFromControlState(controlState: CleanReduxState | null) {
  * profile, not to this cache.
  */
 let _midiFeedbackSent = new Map<string, boolean>()
+
+/**
+ * Which half of the timed-gate flash cycle the lamps were last built for.
+ *
+ * An overdue pad blinks by having its lamp state recomputed either side of a
+ * half-second boundary. Nothing dispatches at those boundaries, so the loop has to
+ * notice them — but only twice a second, rather than rebuilding the lamp map on every
+ * one of the ninety ticks in between.
+ */
+let _lastTimedFlashPhaseOn: boolean | null = null
+
+/** Whether a gate was open on the previous tick, so the one that shuts it still syncs. */
+let _lastTimedActive = false
 
 function sendMidiFeedbackChanges(
   changes: Array<{ inputID: string; lit: boolean }>
@@ -578,12 +595,29 @@ function runRealtimeLoopTick() {
         })
       }
     }
-    // A timed gate shuts when its deadline passes, which dispatches nothing — so the
-    // lamp reporting it would stay lit until some unrelated state change came along.
-    // Only asked while a gate is actually outstanding, and `midiFeedbackChanges` still
-    // sends nothing unless a lamp really moved.
-    if (anyGroupTimedPending(_controlState?.groupControl)) {
+    // A timed gate shuts when its deadline passes, and an overdue one starts blinking,
+    // and neither dispatches anything — so the lamps reporting them would stay as they
+    // were until some unrelated state change came along. Both cases are asked for here
+    // and nowhere else; `midiFeedbackChanges` still sends nothing unless a lamp moved.
+    //
+    // A running gate is checked every tick, since its deadline can fall anywhere. A
+    // reminder only needs looking at when the flash phase turns over, which also picks
+    // up a gate going overdue within half a second of it happening.
+    const timedGroupControl = _controlState?.groupControl
+    const timedNowMs = Date.now()
+    const timedActive = anyGroupTimedActive(timedGroupControl, timedNowMs)
+    const timedWasActive = _lastTimedActive
+    _lastTimedActive = timedActive
+    if (timedActive || timedWasActive) {
+      // Every tick while anything is running, and once more on the tick that ends it,
+      // so the lamp goes dark with the gate. Bounded by the length of a run.
       syncMidiFeedback()
+    } else if (anyGroupTimedReminderArmed(timedGroupControl)) {
+      const phaseOn = timedFlashPhaseOn(timedNowMs)
+      if (phaseOn !== _lastTimedFlashPhaseOn) {
+        _lastTimedFlashPhaseOn = phaseOn
+        syncMidiFeedback()
+      }
     }
     telemetryHealthSampled('engine.realtime', 'ok')
   } catch (error) {

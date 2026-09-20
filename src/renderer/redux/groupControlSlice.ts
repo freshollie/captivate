@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 import {
   clampBlinderFadeBeats,
   clampGroupStrobeValue,
+  clampGroupTimedReminderSeconds,
   clampGroupTimedSeconds,
   initGroupControl,
   initGroupControlState,
@@ -446,11 +447,44 @@ export const groupControlSlice = createSlice({
      */
     setGroupTimedEnabled: (
       state,
-      { payload }: PayloadAction<{ group: string; enabled: boolean }>
+      { payload }: PayloadAction<{
+        group: string
+        enabled: boolean
+        /** Stamped as the reminder's starting point; see `fireGroupTimed`. */
+        nowMs: number
+      }>
     ) => {
       const control = controlFor(state, payload.group)
       control.timedEnabled = payload.enabled === true
       clearTimed(control)
+      // Turning the gate on starts the reminder's clock, so a group configured and
+      // then left alone nags on schedule rather than waiting for a first press that
+      // may never come. Turning it off stops the clock entirely.
+      control.timedLastFiredAtMs = control.timedEnabled ? payload.nowMs : 0
+    },
+    /**
+     * How long Go may go unpressed before it starts flashing. 0 is off.
+     *
+     * Setting it on a gate that has never been fired starts the clock from now, so the
+     * reminder begins counting from the moment it is asked for rather than sitting
+     * dormant until the first press.
+     */
+    setGroupTimedReminderSeconds: (
+      state,
+      { payload }: PayloadAction<{
+        group: string
+        seconds: number
+        nowMs: number
+      }>
+    ) => {
+      const control = controlFor(state, payload.group)
+      control.timedReminderSeconds = clampGroupTimedReminderSeconds(payload.seconds)
+      if (
+        control.timedReminderSeconds > 0 &&
+        !(Number.isFinite(control.timedLastFiredAtMs) && control.timedLastFiredAtMs > 0)
+      ) {
+        control.timedLastFiredAtMs = payload.nowMs
+      }
     },
     /** How long one press of Go runs for. Changing it never affects a run in progress. */
     setGroupTimedSeconds: (
@@ -479,6 +513,9 @@ export const groupControlSlice = createSlice({
     ) => {
       const control = controlFor(state, payload.group)
       if (control.timedEnabled !== true) return
+      // Any press restarts the reminder, the stopping one included: what it measures is
+      // time since a hand was last on the control, not time since fog was last made.
+      control.timedLastFiredAtMs = payload.nowMs
       if (isGroupTimedActive(control, payload.nowMs)) {
         clearTimed(control)
         return
@@ -658,6 +695,7 @@ export const {
   toggleGroupBlackout,
   setGroupTimedEnabled,
   setGroupTimedSeconds,
+  setGroupTimedReminderSeconds,
   fireGroupTimed,
   setBlinderFadeBeats,
 } = groupControlSlice.actions

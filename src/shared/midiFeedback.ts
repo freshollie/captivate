@@ -1,5 +1,9 @@
 import { CleanReduxState } from '../renderer/redux/store'
-import { isGroupTimedActive } from './groupControl'
+import {
+  isGroupTimedActive,
+  isGroupTimedOverdue,
+  timedFlashPhaseOn,
+} from './groupControl'
 import type { GroupControl, GroupControlState } from './groupControl'
 
 /**
@@ -117,7 +121,16 @@ export function computeMidiFeedbackState(
     } else if (action.type === 'setGroupBlackout') {
       lamp(id, blackoutActive(groupOf(groupControl, action.group)))
     } else if (action.type === 'setGroupTimed') {
-      lamp(id, isGroupTimedActive(groupOf(groupControl, action.group), nowMs))
+      // Solid while the gate is open, blinking while it is overdue, dark otherwise.
+      // The blink is a function of the clock rather than a state the engine toggles,
+      // so the pad and the on-screen button stay in step without either driving the
+      // other — they are both reading the same half-second quantum.
+      const control = groupOf(groupControl, action.group)
+      lamp(
+        id,
+        isGroupTimedActive(control, nowMs) ||
+          (isGroupTimedOverdue(control, nowMs) && timedFlashPhaseOn(nowMs))
+      )
     } else if (action.type === 'setGroupExclusive') {
       lamp(id, exclusiveActive(groupOf(groupControl, action.group)))
     } else if (action.type === 'releaseGroupStrobe') {

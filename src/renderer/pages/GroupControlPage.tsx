@@ -1,4 +1,4 @@
-import styled from 'styled-components'
+import styled, { keyframes, css } from 'styled-components'
 import { useEffect, useMemo, useState } from 'react'
 import { useDispatch } from 'react-redux'
 import { Button } from '@mui/material'
@@ -28,6 +28,7 @@ import {
   toggleGroupStrobeFlash,
   setGroupTimedEnabled,
   setGroupTimedSeconds,
+  setGroupTimedReminderSeconds,
   fireGroupTimed,
 } from '../redux/groupControlSlice'
 import {
@@ -46,10 +47,16 @@ import {
   isGroupDiscoBallActive,
   isGroupOverridingScene,
   isGroupTimedActive,
+  isGroupTimedOverdue,
+  isGroupTimedReminderArmed,
   groupTimedRemainingMs,
+  groupTimedSinceLastFiredMs,
   clampGroupTimedSeconds,
+  clampGroupTimedReminderSeconds,
   MIN_TIMED_SECONDS,
   MAX_TIMED_SECONDS,
+  MAX_TIMED_REMINDER_SECONDS,
+  TIMED_FLASH_HALF_PERIOD_MS,
   wheelSlotIndex,
   type GroupControl,
   type GroupWheel,
@@ -70,13 +77,16 @@ const BLINDER_FADE_OPTIONS = [0, 0.25, 0.5, 1, 2, 4, 8]
 const EMPTY_GROUP_CONTROL: GroupControl = Object.freeze(initGroupControl())
 
 /**
- * A clock that runs only while this card's gate is open.
+ * A clock that runs only while this card's gate has something to count.
  *
- * A gate shuts because a deadline passed, so nothing dispatches and nothing re-renders
- * on its own — the countdown would freeze and the button would sit there claiming to be
- * running. Reseeded whenever the deadline changes so the first render after a press is
- * judged against a fresh reading rather than whenever this card last happened to tick,
- * and the interval stops the moment the gate reads shut.
+ * Both of the gate's states change without anything being dispatched — a run ends
+ * because a deadline passed, a reminder comes due because enough time went by — so
+ * without a tick the countdown would freeze and the button would never start flashing.
+ *
+ * Reseeded whenever the deadline changes, so the first render after a press is judged
+ * against a fresh reading rather than whenever this card last happened to tick. A
+ * running gate is followed closely enough for a countdown; an armed reminder only needs
+ * the flash quantum, and a card with neither stops ticking altogether.
  */
 function useTimedGateNow(control: GroupControl): number {
   const until = control.timedUntilMs
@@ -87,11 +97,16 @@ function useTimedGateNow(control: GroupControl): number {
   }, [until])
 
   const running = isGroupTimedActive(control, nowMs)
+  const intervalMs = running
+    ? 100
+    : isGroupTimedReminderArmed(control)
+    ? TIMED_FLASH_HALF_PERIOD_MS
+    : 0
   useEffect(() => {
-    if (!running) return
-    const handle = setInterval(() => setNowMs(Date.now()), 100)
+    if (intervalMs === 0) return
+    const handle = setInterval(() => setNowMs(Date.now()), intervalMs)
     return () => clearInterval(handle)
-  }, [running])
+  }, [intervalMs])
 
   return nowMs
 }
@@ -449,6 +464,8 @@ function GroupCard({
   const timedNowMs = useTimedGateNow(control)
   const timedRunning = isGroupTimedActive(control, timedNowMs)
   const timedRemainingMs = groupTimedRemainingMs(control, timedNowMs)
+  const timedOverdue = isGroupTimedOverdue(control, timedNowMs)
+  const timedSinceMs = groupTimedSinceLastFiredMs(control, timedNowMs)
 
   return (
     <Card $active={isActive} $faderCount={faderCount}>
@@ -512,6 +529,7 @@ function GroupCard({
                 setGroupTimedEnabled({
                   group,
                   enabled: event.target.checked,
+                  nowMs: Date.now(),
                 })
               )
             }
@@ -544,6 +562,37 @@ function GroupCard({
           ) : null}
         </OptionRow>
       </BriefTooltip>
+
+      {control.timedEnabled === true ? (
+        <BriefTooltip title="Flash the Go button, and any MIDI pad it is mapped to, once this long has passed since Go was last pressed. For output that fades without anything on screen saying so — a hazer needing a top-up between songs. 0 turns it off. The clock starts when you tick the gate on, or set this, and restarts on every press.">
+          <OptionRow>
+            <OptionLabel $alert={timedOverdue}>flash after</OptionLabel>
+            <TimedSecondsInput
+              type="number"
+              min={0}
+              max={MAX_TIMED_REMINDER_SECONDS}
+              step={10}
+              value={control.timedReminderSeconds}
+              onChange={(event) =>
+                dispatch(
+                  setGroupTimedReminderSeconds({
+                    group,
+                    seconds: clampGroupTimedReminderSeconds(
+                      Number(event.target.value)
+                    ),
+                    nowMs: Date.now(),
+                  })
+                )
+              }
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`${group} flashes Go after this many seconds`}
+            />
+            <OptionLabel $alert={false}>
+              {control.timedReminderSeconds > 0 ? 's' : 's (off)'}
+            </OptionLabel>
+          </OptionRow>
+        </BriefTooltip>
+      ) : null}
 
       <FaderRow>
         <Fader
@@ -652,11 +701,18 @@ function GroupCard({
                   ? `Running — ${(timedRemainingMs / 1000).toFixed(
                       1
                     )}s left, then this group shuts on its own. Press again to stop it now.`
+                  : timedOverdue
+                  ? `Not fired for ${Math.round(
+                      timedSinceMs / 1000
+                    )}s — past the ${control.timedReminderSeconds}s reminder. Press to fire it for ${
+                      control.timedSeconds
+                    }s.`
                   : `Fire this group for ${control.timedSeconds}s, driven from its own fader, then shut it again. Held dark until you do. Assign to a MIDI pad.`
               }
             >
               <TimedButton
                 $active={timedRunning}
+                $overdue={timedOverdue}
                 size="small"
                 onClick={() =>
                   dispatch(fireGroupTimed({ group, nowMs: Date.now() }))
@@ -1275,7 +1331,29 @@ const TimedSecondsInput = styled.input`
  * room is whether the thing is currently going. The countdown sits in the label, so the
  * card says how long is left without a second readout.
  */
-const TimedButton = styled(Button)<{ $active: boolean }>`
+/**
+ * Steps between the two states rather than easing between them, so it reads as a pad
+ * blinking rather than as a glow, and runs at the same rate the lamp does.
+ *
+ * Not phase-locked to the lamp: this starts whenever the button goes overdue, while the
+ * lamp rounds to a fixed half-second quantum. Matching them would mean re-rendering the
+ * card at the flash rate to drive the style by hand, which buys nothing — the two are
+ * never in the same field of view, and only the rate reads as "the same signal".
+ */
+const timedOverdueFlash = keyframes`
+  0%, 49.9% {
+    color: #0e1a10;
+    background: #6fdc86;
+    border-color: #6fdc86;
+  }
+  50%, 100% {
+    color: #9fe0a8;
+    background: #6fdc8622;
+    border-color: #6fdc8666;
+  }
+`
+
+const TimedButton = styled(Button)<{ $active: boolean; $overdue: boolean }>`
   && {
     min-width: 2.6rem;
     font-size: 0.7rem;
@@ -1288,6 +1366,14 @@ const TimedButton = styled(Button)<{ $active: boolean }>`
     &:hover {
       background: ${(p) => (p.$active ? '#8be79c' : '#6fdc8633')};
     }
+
+    ${(p) =>
+      p.$overdue
+        ? css`
+            animation: ${timedOverdueFlash}
+              ${(TIMED_FLASH_HALF_PERIOD_MS * 2) / 1000}s steps(1, end) infinite;
+          `
+        : null}
   }
 `
 

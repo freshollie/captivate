@@ -264,6 +264,27 @@ export interface GroupControl {
    */
   timedUntilMs: number
   /**
+   * Flash the Go button — and the pad it is mapped to — once this many seconds have
+   * passed since it was last pressed. 0 is off.
+   *
+   * A nag rather than an alarm: hazer output falls off over a few minutes and the
+   * operator has no other way to notice, so the control that fixes it asks to be
+   * pressed instead of waiting to be remembered. It reports on the button itself
+   * because that is the thing the answer is: nothing else has to be found or read.
+   */
+  timedReminderSeconds: number
+  /**
+   * Wall-clock ms of the last press of Go, or 0 when it has not been pressed.
+   *
+   * Zero deliberately disarms the reminder rather than reading as "overdue since the
+   * epoch": a project reopens with this cleared, and a pad flashing the moment a show
+   * is loaded — before anyone has touched anything — is noise, not a reminder. The
+   * first press starts the cycle, as does setting the reminder while the gate is on.
+   *
+   * Same clock and the same cross-process reasoning as {@link timedUntilMs}.
+   */
+  timedLastFiredAtMs: number
+  /**
    * Take the group off the scene entirely: the brightness fader stops scaling what
    * the scene produced and drives the fixtures directly, to white at whatever level
    * it is parked at — whether or not any split addresses them.
@@ -469,6 +490,8 @@ export function initGroupControl(): GroupControl {
     timedEnabled: false,
     timedSeconds: DEFAULT_TIMED_SECONDS,
     timedUntilMs: 0,
+    timedReminderSeconds: 0,
+    timedLastFiredAtMs: 0,
   }
 }
 
@@ -479,6 +502,31 @@ export const MAX_TIMED_SECONDS = 600
 export function clampGroupTimedSeconds(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_TIMED_SECONDS
   return Math.min(MAX_TIMED_SECONDS, Math.max(MIN_TIMED_SECONDS, value))
+}
+
+export const MIN_TIMED_REMINDER_SECONDS = 1
+export const MAX_TIMED_REMINDER_SECONDS = 3600
+
+/** 0 means off; anything else is pulled into the usable range. */
+export function clampGroupTimedReminderSeconds(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0
+  return Math.min(
+    MAX_TIMED_REMINDER_SECONDS,
+    Math.max(MIN_TIMED_REMINDER_SECONDS, value)
+  )
+}
+
+/**
+ * Half the flash period, so the on-screen button and the pad lamp blink together.
+ *
+ * The lamp can only be told "on" or "off", so its flashing has to be a function of the
+ * clock rather than a CSS animation, and this is the quantum both sides round to.
+ */
+export const TIMED_FLASH_HALF_PERIOD_MS = 500
+
+/** Which half of the flash cycle `nowMs` falls in. */
+export function timedFlashPhaseOn(nowMs: number): boolean {
+  return Math.floor(nowMs / TIMED_FLASH_HALF_PERIOD_MS) % 2 === 0
 }
 
 /**
@@ -508,23 +556,75 @@ export function isGroupTimedActive(
 }
 
 /**
- * Whether any group has a timed gate that could shut on its own.
+ * Whether this group's reminder is running — configured, and with a press to count from.
  *
- * A gate closes because a deadline passed, not because anything dispatched, so the
- * things that only refresh on a state change — the controller lamps above all — have to
- * be told to look again while one is outstanding. Cheap enough to ask every frame, and
- * false for every rig that has no timed group at all.
+ * Armed is not the same as overdue: an armed reminder is the reason to keep looking at
+ * the clock at all, which is what the lamp refresh needs to know.
  */
-export function anyGroupTimedPending(
+export function isGroupTimedReminderArmed(
+  control: GroupControl | null | undefined
+): boolean {
+  if (control === null || control === undefined) return false
+  if (control.timedEnabled !== true) return false
+  if (!Number.isFinite(control.timedReminderSeconds)) return false
+  if (control.timedReminderSeconds <= 0) return false
+  return Number.isFinite(control.timedLastFiredAtMs) && control.timedLastFiredAtMs > 0
+}
+
+/** Whether this group's Go button is asking to be pressed. */
+export function isGroupTimedOverdue(
+  control: GroupControl | null | undefined,
+  nowMs: number
+): boolean {
+  if (!isGroupTimedReminderArmed(control)) return false
+  // A gate that is running was pressed to start it, so it is never also overdue —
+  // and a button already lit solid has nothing left to say by flashing.
+  if (isGroupTimedActive(control, nowMs)) return false
+  const since = nowMs - (control as GroupControl).timedLastFiredAtMs
+  // A clock that moved backwards under us is no reason to nag; wait for it to catch up.
+  if (!Number.isFinite(since) || since < 0) return false
+  return since >= (control as GroupControl).timedReminderSeconds * 1000
+}
+
+/** Seconds since Go was last pressed, or 0 when it never has been. For the tooltip. */
+export function groupTimedSinceLastFiredMs(
+  control: GroupControl | null | undefined,
+  nowMs: number
+): number {
+  const lastFired = control?.timedLastFiredAtMs
+  if (!Number.isFinite(lastFired) || (lastFired as number) <= 0) return 0
+  return Math.max(0, nowMs - (lastFired as number))
+}
+
+/** Whether any group's reminder is running, so the lamps have to keep being asked. */
+export function anyGroupTimedReminderArmed(
   state: GroupControlState | null | undefined
 ): boolean {
   const byGroup = safeByGroup(state)
   for (const control of Object.values(byGroup)) {
-    if (control === undefined) continue
-    if (control.timedEnabled !== true) continue
-    if (Number.isFinite(control.timedUntilMs) && control.timedUntilMs > 0) {
-      return true
-    }
+    if (isGroupTimedReminderArmed(control)) return true
+  }
+  return false
+}
+
+/**
+ * Whether any group's timed gate is open right now.
+ *
+ * A gate closes because a deadline passed, not because anything dispatched, so the
+ * things that only refresh on a state change — the controller lamps above all — have to
+ * be told to look again while one is running, and once more on the way down.
+ *
+ * Asked against the clock rather than off `timedUntilMs` alone: an expired deadline is
+ * left in state until something clears it, so a "has a deadline" test would stay true
+ * for the rest of the session after a single run.
+ */
+export function anyGroupTimedActive(
+  state: GroupControlState | null | undefined,
+  nowMs: number
+): boolean {
+  const byGroup = safeByGroup(state)
+  for (const control of Object.values(byGroup)) {
+    if (isGroupTimedActive(control, nowMs)) return true
   }
   return false
 }
