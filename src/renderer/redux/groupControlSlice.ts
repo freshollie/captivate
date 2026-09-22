@@ -4,6 +4,7 @@ import {
   clampGroupStrobeValue,
   clampGroupTimedReminderSeconds,
   clampGroupTimedSeconds,
+  followsMasterRelease,
   initGroupControl,
   initGroupControlState,
   isGroupTimedActive,
@@ -332,6 +333,11 @@ export const groupControlSlice = createSlice({
      * blacks out the rig from a card the operator may not think to look at. This is
      * the one control guaranteed to clear it. Brightness is a trim, not an override,
      * so it is left alone.
+     *
+     * Groups with `followMasterRelease` cleared sit this out: their override is the
+     * thing the operator is hitting this button to keep - house lights locked on, a
+     * practical - so dropping it would be the panic button causing the blackout.
+     * Their own Release pad is still the way down.
      */
     releaseAllLiveOverrides: (state) => {
       // Master strobe and blinder are overrides and go; the master dimmer is a
@@ -340,6 +346,14 @@ export const groupControlSlice = createSlice({
       state.master.blinderActive = false
       for (const control of Object.values(state.byGroup)) {
         if (control === undefined) continue
+        // Even an exempt group gets its Release modifier cleared - see below. It is a
+        // stuck input rather than an override, and it is what makes the group's own
+        // Release, the only remaining way down, work at all.
+        if (!followsMasterRelease(control)) {
+          control.releaseHeld = false
+          control.releaseUsedForLock = false
+          continue
+        }
         clearStrobe(control)
         clearWheelOverride(control)
         clearExclusive(control)
@@ -533,6 +547,19 @@ export const groupControlSlice = createSlice({
       controlFor(state, payload.group).followMasterHotkeys = payload.follow === true
     },
     /**
+     * Take the group out of the rig-wide Release all, or put it back in.
+     *
+     * A setting, like the hotkey opt-out: it survives the very button it exempts the
+     * group from, and every scene change, or it would be undone by the first thing it
+     * is there to survive.
+     */
+    setGroupFollowMasterRelease: (
+      state,
+      { payload }: PayloadAction<{ group: string; follow: boolean }>
+    ) => {
+      controlFor(state, payload.group).followMasterRelease = payload.follow === true
+    },
+    /**
      * Hand the group's fixtures to its own fader, off the scene entirely.
      *
      * A setting, not a gesture: it survives Release, Release all and scene changes,
@@ -681,6 +708,7 @@ export const {
   releaseAllGroupStrobes,
   releaseAllLiveOverrides,
   setGroupFollowMasterHotkeys,
+  setGroupFollowMasterRelease,
   setGroupOverrideScene,
   setMasterBrightness,
   setMasterStrobe,

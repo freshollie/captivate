@@ -231,6 +231,21 @@ export interface GroupControl {
    */
   followMasterHotkeys: boolean
   /**
+   * Whether the rig-wide **Release all** reaches this group.
+   *
+   * Opt-out like {@link followMasterHotkeys}, and for the same kind of light: the
+   * panic button drops every override on every card, which is the wrong answer for a
+   * group whose override *is* its resting state - a blackout locked on the house
+   * lights, a fogger's gate, a practical held down all night. Those are the groups an
+   * operator reaches for Release all to protect, not to clear. Clear it and only this
+   * card's own Release, and a light-scene change, still reach the group.
+   *
+   * A stuck Release *modifier* is cleared either way: that is an input state rather
+   * than an override, and leaving it latched would turn every later press of the
+   * card's own Release into a lock, with nothing left to undo it.
+   */
+  followMasterRelease: boolean
+  /**
    * Whether this group is gated by a timed Go button rather than left free-running.
    *
    * A valve, not a look: while it is off the group's lights are held at nothing, and
@@ -486,6 +501,7 @@ export function initGroupControl(): GroupControl {
     releaseHeld: false,
     releaseUsedForLock: false,
     followMasterHotkeys: true,
+    followMasterRelease: true,
     overrideScene: false,
     timedEnabled: false,
     timedSeconds: DEFAULT_TIMED_SECONDS,
@@ -784,6 +800,20 @@ export function isGroupOverridingScene(
   return control?.overrideScene === true
 }
 
+/**
+ * Whether the rig-wide Release all reaches this group.
+ *
+ * Read through here rather than off the flag directly: state arrives from projects
+ * written before it existed, and from peer windows, so a missing flag has to mean
+ * "follows" - the other way round would quietly exempt every group from the panic
+ * button the first time an old show was opened.
+ */
+export function followsMasterRelease(
+  control: GroupControl | null | undefined
+): boolean {
+  return control?.followMasterRelease !== false
+}
+
 export function isGroupControlActive(
   control: GroupControl | null | undefined
 ): boolean {
@@ -831,6 +861,16 @@ export function overridingGroupNames(
   const byGroup = safeByGroup(state)
   return Object.keys(byGroup)
     .filter((group) => isGroupOverridingScene(byGroup[group]))
+    .sort()
+}
+
+/** Group names the rig-wide Release all will not touch, in stable order. */
+export function masterReleaseExemptGroupNames(
+  state: GroupControlState | null | undefined
+): string[] {
+  const byGroup = safeByGroup(state)
+  return Object.keys(byGroup)
+    .filter((group) => !followsMasterRelease(byGroup[group]))
     .sort()
 }
 

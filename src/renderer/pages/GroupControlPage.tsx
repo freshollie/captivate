@@ -18,6 +18,7 @@ import {
   setGroupStrobe,
   setBlinderFadeBeats,
   setGroupFollowMasterHotkeys,
+  setGroupFollowMasterRelease,
   setGroupOverrideScene,
   setMasterBrightness,
   toggleMasterBlinder,
@@ -37,6 +38,7 @@ import {
   describeGroupWheels,
   DISCO_BALL_DEAD_ZONE,
   effectiveGroupBrightness,
+  followsMasterRelease,
   groupDiscoBallLevel,
   groupDiscoBallPosition,
   groupHasMovers,
@@ -49,6 +51,7 @@ import {
   isGroupTimedActive,
   isGroupTimedOverdue,
   isGroupTimedReminderArmed,
+  masterReleaseExemptGroupNames,
   groupTimedRemainingMs,
   groupTimedSinceLastFiredMs,
   clampGroupTimedSeconds,
@@ -229,15 +232,29 @@ function Header({ groupCount }: { groupCount: number }) {
     (state) =>
       Object.values(state.groupControl.byGroup).filter(
         (control) =>
-          control?.strobeEnabled === true ||
-          control?.exclusiveEnabled === true ||
-          control?.blinderActive === true ||
-          control?.blackoutActive === true ||
-          // A deadline still outstanding, judged without a clock: this only decides
-          // whether Release all is enabled, and clearing a gate that has just shut on
-          // its own costs nothing.
-          (control?.timedEnabled === true && (control?.timedUntilMs ?? 0) > 0)
+          // Groups opted out of Release all are not counted: the button reports what
+          // it would drop, and one left enabled by a group it cannot touch would read
+          // as a rig still holding something after it had been pressed.
+          followsMasterRelease(control) &&
+          (control?.strobeEnabled === true ||
+            control?.exclusiveEnabled === true ||
+            control?.blinderActive === true ||
+            control?.blackoutActive === true ||
+            // A deadline still outstanding, judged without a clock: this only decides
+            // whether Release all is enabled, and clearing a gate that has just shut
+            // on its own costs nothing.
+            (control?.timedEnabled === true && (control?.timedUntilMs ?? 0) > 0))
       ).length
+  )
+  // Same joined-string trick as the solo and blackout lists below: the Release all
+  // tooltip has to name the groups it will leave standing, or an exemption set weeks
+  // ago is invisible at the moment it matters.
+  const releaseExemptKey = useTypedSelector((state) =>
+    masterReleaseExemptGroupNames(state.groupControl).join('\n')
+  )
+  const releaseExemptGroups = useMemo(
+    () => (releaseExemptKey.length === 0 ? [] : releaseExemptKey.split('\n')),
+    [releaseExemptKey]
   )
   // Selected as a joined string, not an array: a fresh array compares unequal every
   // time and would re-render the header on every action in the app.
@@ -314,7 +331,15 @@ function Header({ groupCount }: { groupCount: number }) {
         </BlackoutWarning>
       ) : null}
       <ButtonMidiOverlay action={{ type: 'releaseAllGroupOverrides' }}>
-        <BriefTooltip title="Drop every live override on every group — strobes, solos, blinders, blackouts, running timed gates and any locks holding them. Brightness trims are left alone. Assign it to a MIDI pad: this is the panic button.">
+        <BriefTooltip
+          title={`Drop every live override on every group — strobes, solos, blinders, blackouts, running timed gates and any locks holding them. Brightness trims are left alone. Assign it to a MIDI pad: this is the panic button.${
+            releaseExemptGroups.length > 0
+              ? ` Untouched: ${releaseExemptGroups.join(
+                  ', '
+                )} - those groups do not follow Release all.`
+              : ''
+          }`}
+        >
           <span>
             <Button
               disabled={liveCount === 0}
@@ -496,6 +521,27 @@ function GroupCard({
           />
           <OptionLabel $alert={control.followMasterHotkeys === false}>
             follow master hotkeys
+          </OptionLabel>
+        </OptionRow>
+      </BriefTooltip>
+
+      <BriefTooltip title="Whether the rig-wide Release all button and pad reach this group. Clear it for lights whose override is meant to stand - house lights held on, a practical - so the panic button cannot take them out with everything else. This card's own Release still works, and so does a light-scene change.">
+        <OptionRow>
+          <OptionBox
+            type="checkbox"
+            checked={followsMasterRelease(control)}
+            onChange={(event) =>
+              dispatch(
+                setGroupFollowMasterRelease({
+                  group,
+                  follow: event.target.checked,
+                })
+              )
+            }
+            aria-label={`${group} follows Release all`}
+          />
+          <OptionLabel $alert={!followsMasterRelease(control)}>
+            follow release all
           </OptionLabel>
         </OptionRow>
       </BriefTooltip>

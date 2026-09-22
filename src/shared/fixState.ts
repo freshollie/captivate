@@ -1419,6 +1419,11 @@ export function fixGroupControlState(
       followMasterHotkeys:
         control.followMasterHotkeys !== false &&
         (control as { followMaster?: unknown }).followMaster !== false,
+      // Opt-out too, and a setting rather than a gesture: a group kept out of the
+      // rig-wide Release all is still kept out of it next time the show opens, which
+      // is the whole point of the flag - the group it protects is usually the one
+      // nobody touches between shows.
+      followMasterRelease: control.followMasterRelease !== false,
       // A setting rather than a gesture, so it persists — and opt-in, so a project
       // written before it existed keeps every group on the scene.
       overrideScene: control.overrideScene === true,

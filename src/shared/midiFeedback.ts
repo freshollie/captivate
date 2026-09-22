@@ -1,5 +1,6 @@
 import { CleanReduxState } from '../renderer/redux/store'
 import {
+  followsMasterRelease,
   isGroupTimedActive,
   isGroupTimedOverdue,
   timedFlashPhaseOn,
@@ -69,12 +70,20 @@ function hasReleasableOverride(control: GroupControl | undefined): boolean {
   )
 }
 
+/**
+ * Same question for the rig-wide Release, over the groups it can actually reach.
+ *
+ * A group opted out of Release all is not something that pad can drop, so it must not
+ * light it: a lamp lit by a press that does nothing is worse than no lamp at all.
+ */
 function anyGroupHasReleasableOverride(
   groupControl: GroupControlState | undefined
 ): boolean {
   const byGroup = groupControl?.byGroup ?? {}
-  return Object.keys(byGroup).some((group) =>
-    hasReleasableOverride(byGroup[group])
+  return Object.keys(byGroup).some(
+    (group) =>
+      followsMasterRelease(byGroup[group]) &&
+      hasReleasableOverride(byGroup[group])
   )
 }
 
