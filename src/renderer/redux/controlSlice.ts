@@ -59,6 +59,10 @@ import {
 } from '../../shared/Scenes'
 import { reorderArray } from '../../shared/util'
 import { normalizeAudioBandConfig } from '../../shared/audioEngine'
+import {
+  EPICNESS_LEVEL_MAX,
+  EPICNESS_LEVEL_MIN,
+} from '../../shared/autoScene'
 
 export interface ControlState extends ScenesStateBundle {
   device: DeviceState
@@ -245,6 +249,30 @@ const scenesSlice = createSlice({
       { payload: { sceneType, val } }: ScopedAction<boolean>
     ) => {
       state[sceneType].auto.energyMatchEnabled = val
+      if (val) {
+        state[sceneType].auto.levelMatchEnabled = false
+      }
+    },
+    setAutoSceneLevelMatchEnabled: (
+      state,
+      { payload: { sceneType, val } }: ScopedAction<boolean>
+    ) => {
+      state[sceneType].auto.levelMatchEnabled = val
+      // One way of choosing the next scene at a time: level matching answers the
+      // question energy matching would have, so leaving both on would be ambiguous.
+      if (val) {
+        state[sceneType].auto.energyMatchEnabled = false
+      }
+    },
+    setAutoSceneEpicnessLevel: (
+      state,
+      { payload: { sceneType, val } }: ScopedAction<number>
+    ) => {
+      const level = Math.round(val)
+      if (level < EPICNESS_LEVEL_MIN || level > EPICNESS_LEVEL_MAX) {
+        return
+      }
+      state[sceneType].auto.epicnessLevel = level
     },
     newScene: (state, { payload }: PayloadAction<SceneType>) => {
       const scenes = state[payload]
@@ -1283,6 +1311,8 @@ export const {
   setAutoScenePeriod,
   setAutoSceneMatchAudioEnergy,
   setAutoSceneEnergyMatchEnabled,
+  setAutoSceneLevelMatchEnabled,
+  setAutoSceneEpicnessLevel,
   newScene,
   removeScene,
   setActiveScene,

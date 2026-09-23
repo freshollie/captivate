@@ -67,6 +67,8 @@ export function generateDefaultLightScenes(): LightScenes_t {
       period: 8,
       energyMatchEnabled: true,
       matchAudioEnergy: true,
+      levelMatchEnabled: false,
+      epicnessLevel: 0,
     },
   }
   fixLightScenes(result)

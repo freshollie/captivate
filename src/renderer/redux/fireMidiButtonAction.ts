@@ -34,7 +34,7 @@ import {
 import type { SceneType } from '../../shared/Scenes'
 import { msUntilNextBeatBoundary } from '../../shared/sceneBeatQuantize'
 import { pickSceneForEpicnessLevel } from '../../shared/autoScene'
-import { setActiveScene } from './controlSlice'
+import { setActiveScene, setAutoSceneEpicnessLevel } from './controlSlice'
 
 const pendingMidiSceneTimeouts: Partial<
   Record<SceneType, ReturnType<typeof setTimeout>>
@@ -120,6 +120,11 @@ export function fireMidiButtonAction(
     // honour, and a second press shuts the gate early.
     dispatch(fireGroupTimed({ group: action.group, nowMs: Date.now() }))
   } else if (action.type === 'setEpicnessLevel') {
+    // Remembered straight away, not on the quantized beat: it is what the level
+    // buttons show as selected, and what auto re-rolls in level mode.
+    dispatch(
+      setAutoSceneEpicnessLevel({ sceneType: 'light', val: action.level })
+    )
     // Resolved now, from the state the operator could see when they pressed —
     // not after the quantize delay, when auto-scene may have moved on.
     const nextScene = pickSceneForEpicnessLevel(

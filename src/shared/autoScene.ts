@@ -69,12 +69,23 @@ export function pickSceneByClosestEnergy(
 }
 
 function pickLightAutoScene(
-  auto: AutoScene_t,
+  light: LightScenes_t,
   candidateIds: string[],
-  currentId: string,
-  audio: AudioEngineMetrics,
-  getEpicness: (id: string) => number | undefined
+  audio: AudioEngineMetrics
 ): string {
+  const auto = light.auto
+  const currentId = light.active
+
+  if (auto.levelMatchEnabled === true) {
+    const level = resolveAutoSceneEpicnessLevel(light)
+    if (level === null) {
+      return currentId
+    }
+    // Exactly what pressing that level button again would give, queue and all, so a
+    // level plays all the way round before anything repeats.
+    return pickSceneForEpicnessLevel(light, level) ?? currentId
+  }
+
   if (auto.energyMatchEnabled !== true) {
     return randomElementExcludeCurrent(candidateIds, currentId)
   }
@@ -83,7 +94,7 @@ function pickLightAutoScene(
     candidateIds,
     currentId,
     targetEnergy,
-    getEpicness
+    (id) => light.byId[id]?.epicness
   )
 }
 
@@ -241,12 +252,53 @@ export function pickSceneForEpicnessLevel(
   return next
 }
 
+/** The level whose bucket holds `sceneId`, or null when no level does. */
+export function epicnessLevelOfScene(
+  light: LightScenes_t,
+  sceneId: string
+): number | null {
+  const buckets = epicnessLevelSceneBuckets(light)
+  for (let index = 0; index < buckets.length; index++) {
+    if (buckets[index]?.includes(sceneId) === true) {
+      return index + EPICNESS_LEVEL_MIN
+    }
+  }
+  return null
+}
+
+/**
+ * The level auto re-rolls in level mode, or null when there is nothing to re-roll.
+ *
+ * Normally the button last pressed. Until one has been pressed the level of whatever
+ * is playing stands in for it, so switching the mode on carries on from the look you
+ * are already on rather than sitting idle until you touch a button.
+ */
+export function resolveAutoSceneEpicnessLevel(
+  light: LightScenes_t
+): number | null {
+  const pressed = light.auto.epicnessLevel
+  if (
+    Number.isFinite(pressed) &&
+    pressed >= EPICNESS_LEVEL_MIN &&
+    pressed <= EPICNESS_LEVEL_MAX
+  ) {
+    return Math.round(pressed)
+  }
+  return epicnessLevelOfScene(light, light.active)
+}
+
 /** Next light scene auto would pick at the current energy (for UI cue highlight). */
 export function resolveLightAutoSceneCueId(
   light: LightScenes_t,
   targetEnergy: number
 ): string | null {
-  if (!light.auto.enabled || light.auto.energyMatchEnabled !== true) {
+  // Level mode has no cue: its next pick comes from the play queue the engine keeps,
+  // which the UI cannot read without advancing it.
+  if (
+    !light.auto.enabled ||
+    light.auto.levelMatchEnabled === true ||
+    light.auto.energyMatchEnabled !== true
+  ) {
     return null
   }
   const candidates = light.ids.filter((id) => light.byId[id]?.autoEnabled === true)
@@ -338,13 +390,7 @@ export function handleAutoScene(
       lightTracker
     )
   ) {
-    const newScene = pickLightAutoScene(
-      light.auto,
-      possibleLightIds,
-      light.active,
-      audio,
-      (id) => light.byId[id]?.epicness
-    )
+    const newScene = pickLightAutoScene(light, possibleLightIds, audio)
     applyAutoSceneSwitch(
       light.active,
       nextTimeState,

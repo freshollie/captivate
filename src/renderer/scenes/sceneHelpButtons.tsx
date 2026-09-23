@@ -40,7 +40,8 @@ export function AutoSceneHelpButton() {
       Turn on <strong>auto</strong> to switch scenes on the beat. The number is
       how many beats to wait between changes. Turn on <strong>energy</strong> or{' '}
       <strong>audio</strong> (when shown) only if you want matching instead of
-      random picks. Scenes with a crossed-out icon are skipped.
+      random picks, or <strong>level</strong> to keep re-picking at the energy level
+      button you last pressed. Scenes with a crossed-out icon are skipped.
     </FieldHelpButton>
   )
 }
@@ -52,6 +53,18 @@ export function EnergyMatchHelpButton() {
       Calm scenes sit on the cool side; intense scenes sit on the warm side. Use
       the slider for a fixed target, or turn on <strong>audio</strong> to follow
       your music (when audio input is on in Connections).
+    </FieldHelpButton>
+  )
+}
+
+export function LevelMatchHelpButton() {
+  return (
+    <FieldHelpButton ariaLabel="How level mode works">
+      Auto changes scene on the beat as usual, but every change is the same pick as
+      pressing the selected <strong>1&ndash;11</strong> energy level button again: a
+      different scene at that level, working round them all before any repeats. Press a
+      level button (or its pad) to move the whole show up or down a gear. Before you
+      press one, it follows the level of the scene already playing.
     </FieldHelpButton>
   )
 }

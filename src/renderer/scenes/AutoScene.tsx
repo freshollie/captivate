@@ -1,29 +1,49 @@
 import Slider from '../base/Slider'
 import styled from 'styled-components'
-import { useDispatch } from 'react-redux'
-import { useControlSelector, useDeviceSelector } from '../redux/store'
-import { useRealtimeSelector } from '../redux/realtimeStore'
+import { useMemo } from 'react'
+import { useDispatch, useStore } from 'react-redux'
+import {
+  getCleanReduxState,
+  useControlSelector,
+  useDeviceSelector,
+  type ReduxState,
+} from '../redux/store'
+import { realtimeStore, useRealtimeSelector } from '../redux/realtimeStore'
 import {
   setAutoSceneEnabled,
   setAutoSceneBombacity,
   setAutoScenePeriod,
   setAutoSceneMatchAudioEnergy,
   setAutoSceneEnergyMatchEnabled,
+  setAutoSceneLevelMatchEnabled,
 } from '../redux/controlSlice'
+import { fireMidiButtonAction } from '../redux/fireMidiButtonAction'
+import { send_user_command } from '../ipcHandler'
 import { SceneType } from '../../shared/Scenes'
 import DraggableNumber from '../base/DraggableNumber'
 import { ButtonMidiOverlay, SliderMidiOverlay } from 'renderer/base/MidiOverlay'
 import { normalizeAudioInputSettings } from '../../shared/audioEngine'
-import { AutoSceneHelpButton, EnergyMatchHelpButton } from './sceneHelpButtons'
+import {
+  AutoSceneHelpButton,
+  EnergyMatchHelpButton,
+  LevelMatchHelpButton,
+} from './sceneHelpButtons'
 import {
   EPICNESS_LEVEL_MAX,
   EPICNESS_LEVEL_MIN,
+  resolveAutoSceneEpicnessLevel,
 } from '../../shared/autoScene'
 
 export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
   const dispatch = useDispatch()
-  const { enabled, epicness, period, energyMatchEnabled, matchAudioEnergy } =
-    useControlSelector((control) => control[sceneType].auto)
+  const {
+    enabled,
+    epicness,
+    period,
+    energyMatchEnabled,
+    matchAudioEnergy,
+    levelMatchEnabled,
+  } = useControlSelector((control) => control[sceneType].auto)
   const audioSettings = useDeviceSelector((device) =>
     normalizeAudioInputSettings(device.connectionSettings.audioInput)
   )
@@ -32,7 +52,8 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
 
   const autoOn = enabled === true
   const showEnergyMode = autoOn && sceneType === 'light'
-  const showEnergyPicker = showEnergyMode && energyMatchEnabled === true
+  const showEnergyPicker =
+    showEnergyMode && energyMatchEnabled === true && levelMatchEnabled !== true
   const showAudioMatchOption = showEnergyPicker && audioInputOn
   const showLiveEnergyMeter = showAudioMatchOption && matchAudioEnergy === true
 
@@ -116,6 +137,26 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
             energy
           </EnergyModeToggle>
           <EnergyMatchHelpButton />
+          <LevelModeToggle
+            type="button"
+            title={
+              levelMatchEnabled
+                ? 'Every change re-picks at the selected level, as if you pressed its button again'
+                : 'Keep re-picking at the energy level button you last pressed'
+            }
+            $active={levelMatchEnabled}
+            onClick={() =>
+              dispatch(
+                setAutoSceneLevelMatchEnabled({
+                  sceneType,
+                  val: !levelMatchEnabled,
+                })
+              )
+            }
+          >
+            level
+          </LevelModeToggle>
+          <LevelMatchHelpButton />
         </>
       )}
       {showAudioMatchOption && (
@@ -173,21 +214,56 @@ export default function AutoScene({ sceneType }: { sceneType: SceneType }) {
  * Live triggers rather than a setting: each press takes the scene of that level that
  * has gone longest unplayed, so tapping a level repeatedly walks round every scene at
  * that energy before any of them comes back. Useful bound to a pad row.
+ *
+ * The last one pressed stays lit, since auto's **level** mode re-rolls it on the beat.
  */
 function EpicnessLevelButtons() {
+  const dispatch = useDispatch()
+  const store = useStore()
+  const light = useControlSelector((control) => control.light)
+
+  const selectedLevel = useMemo(() => {
+    const pressed = light.auto.epicnessLevel
+    if (pressed >= EPICNESS_LEVEL_MIN && pressed <= EPICNESS_LEVEL_MAX) {
+      return pressed
+    }
+    // Before anything is pressed, level mode re-rolls the playing scene's own level,
+    // so light that one rather than nothing.
+    return light.auto.levelMatchEnabled === true
+      ? resolveAutoSceneEpicnessLevel(light)
+      : null
+  }, [light])
+
   const levels: number[] = []
   for (let level = EPICNESS_LEVEL_MIN; level <= EPICNESS_LEVEL_MAX; level++) {
     levels.push(level)
   }
 
+  // Clicking runs the same one-shot as a pad or a keyboard shortcut would, quantize
+  // and play queue included, rather than a second implementation of the same press.
+  const onPress = (level: number) => {
+    fireMidiButtonAction(
+      dispatch as (action: unknown) => void,
+      getCleanReduxState(store.getState() as ReduxState),
+      realtimeStore.getState(),
+      { type: 'setEpicnessLevel', level },
+      () => send_user_command({ type: 'TapTempo' })
+    )
+  }
+
   return (
-    <EpicnessRow title="Jump to a scene at this intensity (MIDI-assignable). Press again to move on to the next scene at that level.">
+    <EpicnessRow title="Jump to a scene at this intensity - click, or assign to a pad. Press again to move on to the next scene at that level.">
       {levels.map((level) => (
         <ButtonMidiOverlay
           key={level}
           action={{ type: 'setEpicnessLevel', level }}
         >
-          <EpicnessLevelButton>{level}</EpicnessLevelButton>
+          <EpicnessLevelButton
+            $active={level === selectedLevel}
+            onClick={() => onPress(level)}
+          >
+            {level}
+          </EpicnessLevelButton>
         </ButtonMidiOverlay>
       ))}
     </EpicnessRow>
@@ -210,21 +286,22 @@ const EpicnessRow = styled.div`
   flex-shrink: 0;
 `
 
-const EpicnessLevelButton = styled.div`
+const EpicnessLevelButton = styled.div<{ $active: boolean }>`
   min-width: 1.1rem;
   padding: 0.05rem 0.15rem;
   text-align: center;
   font-size: 0.65rem;
   line-height: 1.25;
   border-radius: 0.18rem;
-  border: 1px solid #ffffff33;
-  background: #ffffff10;
-  color: ${(props) => props.theme.colors.text.secondary};
+  border: 1px solid ${(p) => (p.$active ? '#7dff9d' : '#ffffff33')};
+  background: ${(p) => (p.$active ? '#7dff9d40' : '#ffffff10')};
+  color: ${(p) =>
+    p.$active ? '#dfffec' : p.theme.colors.text.secondary};
   cursor: pointer;
   user-select: none;
 
   &:hover {
-    background: #ffffff26;
+    background: ${(p) => (p.$active ? '#7dff9d55' : '#ffffff26')};
   }
 `
 
@@ -250,6 +327,19 @@ const EnergyModeToggle = styled.button<{ $active: boolean }>`
     ${(p) => (p.$active ? '#7dff9d' : p.theme.colors.divider)};
   background: ${(p) =>
     p.$active ? '#7dff9d40' : p.theme.colors.bg.panel};
+  color: ${(p) => (p.$active ? '#dfffec' : p.theme.colors.button.text)};
+  white-space: nowrap;
+`
+
+const LevelModeToggle = styled.button<{ $active: boolean }>`
+  flex-shrink: 0;
+  border-radius: 0.3rem;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: ${(p) => (p.$active ? 700 : 500)};
+  cursor: pointer;
+  border: 1px solid ${(p) => (p.$active ? '#7dff9d' : p.theme.colors.divider)};
+  background: ${(p) => (p.$active ? '#7dff9d40' : p.theme.colors.bg.panel)};
   color: ${(p) => (p.$active ? '#dfffec' : p.theme.colors.button.text)};
   white-space: nowrap;
 `

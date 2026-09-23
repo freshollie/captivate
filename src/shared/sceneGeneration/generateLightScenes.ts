@@ -41,6 +41,8 @@ export function generateLightScenesForRig(
       period: 8,
       energyMatchEnabled: true,
       matchAudioEnergy: true,
+      levelMatchEnabled: false,
+      epicnessLevel: 0,
     },
   }
 

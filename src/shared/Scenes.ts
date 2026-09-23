@@ -169,6 +169,8 @@ export function initVisualScenesState(): VisualScenes_t {
       period: 1,
       energyMatchEnabled: false,
       matchAudioEnergy: false,
+      levelMatchEnabled: false,
+      epicnessLevel: 0,
     },
   }
 }
@@ -182,6 +184,14 @@ export interface AutoScene_t {
   energyMatchEnabled: boolean
   /** When energy matching is on and audio input is active: use live audio energy. */
   matchAudioEnergy: boolean
+  /**
+   * When true, each period re-rolls the energy level button that was last pressed -
+   * the same pick as pressing that level again - instead of matching energy or
+   * choosing at random. Mutually exclusive with {@link energyMatchEnabled}.
+   */
+  levelMatchEnabled: boolean
+  /** Energy level button (1..11) that level matching re-rolls; 0 until one is pressed. */
+  epicnessLevel: number
 }
 
 type SceneID = string
@@ -217,6 +227,8 @@ export function initScenesState<T>(defaultScene: T): ScenesState<T> {
       period: 1,
       energyMatchEnabled: false,
       matchAudioEnergy: false,
+      levelMatchEnabled: false,
+      epicnessLevel: 0,
     },
   }
 }

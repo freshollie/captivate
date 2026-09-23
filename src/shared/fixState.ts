@@ -36,6 +36,7 @@ import {
 } from './groupControl'
 import { ColorChannel, inferColorKind } from './dmxColors'
 import { normalizeColorChase } from './colorChase'
+import { EPICNESS_LEVEL_MAX, EPICNESS_LEVEL_MIN } from './autoScene'
 import { normalizeRandomizerOptions } from './randomizer'
 import {
   DmxValue,
@@ -469,6 +470,22 @@ function fixScenesAuto(auto: AutoScene_t): void {
   }
   auto.energyMatchEnabled = auto.energyMatchEnabled === true
   auto.matchAudioEnergy = auto.matchAudioEnergy === true
+  auto.levelMatchEnabled = auto.levelMatchEnabled === true
+  // Level matching replaces energy matching rather than layering over it, so a save
+  // that somehow holds both is resolved the way the buttons would leave it.
+  if (auto.levelMatchEnabled) {
+    auto.energyMatchEnabled = false
+  }
+  if (
+    !Number.isFinite(auto.epicnessLevel) ||
+    auto.epicnessLevel < EPICNESS_LEVEL_MIN ||
+    auto.epicnessLevel > EPICNESS_LEVEL_MAX
+  ) {
+    // 0 means no level button has been pressed yet.
+    auto.epicnessLevel = 0
+  } else {
+    auto.epicnessLevel = Math.round(auto.epicnessLevel)
+  }
 }
 
 export default function fixState(state: CleanReduxState): CleanReduxState {
