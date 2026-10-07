@@ -1,6 +1,7 @@
 {
   "main": "./release/app/dist/main/main.js",
   "scripts": {
+    "launch:macos": "release/build/mac-arm64/Captivate\\ 2.app/Contents/MacOS/Captivate\\ 2",
     "build": "npm-run-all --parallel build:main build:renderer build:remote build:visualizer",
     "build:remote": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.remote.prod.ts",
     "build:projectm-bridge": "node tools/run-projectm-node-gyp.js",
@@ -185,7 +186,13 @@
       "identity": null,
       "type": "development",
       "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Captivate 2 talks to lighting gear on your network: Art-Net DMX nodes, WLED fixtures, Ableton Link tempo sync and the phone remote.",
+        "NSBonjourServices": [
+          "_wled._tcp"
+        ]
+      }
     },
     "dmg": {
       "artifactName": "${productName}-${version}-${arch}.${ext}",

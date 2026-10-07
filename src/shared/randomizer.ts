@@ -177,19 +177,23 @@ function pickRandomIndexes(randCount: number, size: number) {
 }
 
 /**
- * Chase levels: the pattern says which lights are *on right now*, and the envelope is
- * the fade between those states.
+ * Chase levels: the pattern says which lights the chase has *just reached*, and each
+ * one then runs the same one-shot envelope the random mode fires.
  *
- * Deliberately not the one-shot envelope the random mode uses. Firing an envelope per
- * period means the trigger rate and the pulse length are set by two different controls,
- * so lengthening the pulse past the period retriggers a light that is still lit —
- * lifting the duration made a light pulse repeatedly instead of pulsing for longer.
- * Driving the level toward a target instead makes `envelopeDuration` a fade time: a
- * light rises when the pattern reaches it, holds while it stays there, and fades once
- * the chase moves on, however the two rates compare.
+ * The envelope is what `envelopeDuration` measures, so a light is lit for that long
+ * whatever the step rate: an on time shorter than the step gives a pulse with a gap
+ * behind it, and one longer than the step keeps the light up while the chase moves on,
+ * which is the overlap a tail is made of.
+ *
+ * Deliberately armed on arrival rather than re-armed every step the pattern covers the
+ * light: re-arming turns a wide runner tail into a strobe. The exception is a light the
+ * pattern never leaves — a tail as wide as the rig, or a single-light split — which
+ * sees no arrival at all and would sit dark forever, so a finished envelope re-arms on
+ * the next step.
  */
 function updateChaseLevels(
   state: RandomizerState,
+  beatsLast: number,
   ts: TimeState,
   indexes: number[],
   options: RandomizerOptions,
@@ -198,34 +202,51 @@ function updateChaseLevels(
   riseBeats: number,
   fallBeats: number
 ): RandomizerState {
-  const step = Math.floor(ts.beats / Math.max(options.triggerPeriod, 0.0001))
+  const period = Math.max(options.triggerPeriod, 0.0001)
+  const step = Math.floor(ts.beats / period)
   const shape = randomizerChaseShape(options)
   const buckets = randomizerChaseBuckets(options)
 
   const isOnByIndex = new Map<number, boolean>()
+  const arrivedByIndex = new Map<number, boolean>()
   for (let i = 0; i < indexes.length; i++) {
     const rank = ranks?.[i] ?? i
-    isOnByIndex.set(
-      indexes[i],
-      chaseBucketIndex(rank, indexes.length, step, buckets, shape) === 0
-    )
+    const isOn = chaseBucketIndex(rank, indexes.length, step, buckets, shape) === 0
+    const wasOn =
+      chaseBucketIndex(rank, indexes.length, step - 1, buckets, shape) === 0
+    isOnByIndex.set(indexes[i], isOn)
+    arrivedByIndex.set(indexes[i], isOn && !wasOn)
   }
 
   const riseStep = beatDelta / Math.max(riseBeats, 0.0001)
   const fallStep = beatDelta / Math.max(fallBeats, 0.0001)
 
-  return state.map<Point>(({ level, rising }, index) => {
-    const isOn = isOnByIndex.get(index)
-    if (isOn === undefined) {
+  const nextState = state.map<Point>(({ level, rising }, index) => {
+    if (!isOnByIndex.has(index)) {
       return { level, rising }
     }
-    if (isOn) {
+    if (rising) {
       const newLevel = level + riseStep
-      return { level: newLevel > 1 ? 1 : newLevel, rising: true }
+      return newLevel > 1
+        ? { level: 1, rising: false }
+        : { level: newLevel, rising: true }
     }
     const newLevel = level - fallStep
     return { level: newLevel < 0 ? 0 : newLevel, rising: false }
   })
+
+  if (isNewPeriod(beatsLast, ts.beats, period)) {
+    isOnByIndex.forEach((isOn, index) => {
+      const point = nextState[index]
+      if (!isOn || point === undefined) return
+      const spent = point.level <= 0 && !point.rising
+      if (arrivedByIndex.get(index) || spent) {
+        point.rising = true
+      }
+    })
+  }
+
+  return nextState
 }
 
 export function updateIndexes(
@@ -254,6 +275,7 @@ export function updateIndexes(
   if (options.mode === 'chase') {
     return updateChaseLevels(
       state,
+      beatsLast,
       ts,
       indexes,
       options,
